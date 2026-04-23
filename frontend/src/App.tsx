@@ -1,51 +1,69 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
+  approveDangerousCommands,
+  cancelWorkflowQueueItem,
+  cancelWorkflowRun,
   createWorkflowPlan,
   createWorkflowRun,
+  executeWorkflowRun,
+  exportProjectRuntime,
   getCodexCapabilities,
   getCodexSummary,
   getDiscoveredProjects,
+  getProjectCapabilities,
+  getProjectRoots,
   getProjectRuntime,
+  getProjectTree,
+  getRecentProjects,
   getRecentSessions,
+  getWorkflowAgentSessions,
+  getWorkflowQueueDashboard,
+  getWorkflowRun,
+  getWorkflowRunArtifacts,
+  getWorkflowRunEventsUrl,
+  getWorkflowRunLog,
   getWorkflowRuns,
+  importProjectRuntime,
   initProjectRuntime,
+  mirrorProjectRuntime,
+  openWorkspace,
+  parseWorkflowRunEvent,
+  pickProjectDirectory,
   prepareCodexSessionBridge,
+  requeueWorkflowQueueItem,
+  resumeWorkflowRun,
+  retryWorkflowRun,
 } from "./api";
+import { AppHeader } from "./components/AppHeader";
+import { BuildStage } from "./components/BuildStage";
+import { DiagnosticsStage } from "./components/DiagnosticsStage";
+import { ProjectStage } from "./components/ProjectStage";
+import { RunStage } from "./components/RunStage";
+import { StageNav } from "./components/StageNav";
+import type { AppStage } from "./components/StageNav";
+import { useI18n } from "./i18n";
 import type {
   CodexCapabilities,
   CodexSession,
   CodexSessionBridge,
   CodexSummary,
+  MemoryEntry,
+  ProjectCapabilities,
   ProjectRecord,
+  ProjectRootEntry,
   ProjectRuntime,
+  ProjectRuntimeMirrorResult,
+  ProjectTreeEntry,
+  RecentProjectRecord,
+  WorkflowAgentSession,
+  WorkflowArtifactDocument,
   WorkflowPlan,
+  WorkflowQueueDashboard,
+  WorkflowQueueItem,
   WorkflowRun,
+  WorkflowRunArtifacts,
 } from "./types";
-
-type ChatBubble = {
-  speaker: string;
-  role: string;
-  text: string;
-};
-
-const defaultBubbles: ChatBubble[] = [
-  {
-    speaker: "Planner",
-    role: "planner",
-    text: "Drop in a code task and I will draft the first workflow with team roles and execution order.",
-  },
-  {
-    speaker: "Reviewer",
-    role: "reviewer",
-    text: "V1 keeps Git actions manual. We focus on direct edits, verification, and a clean report.",
-  },
-  {
-    speaker: "Codex Bridge",
-    role: "adapter",
-    text: "Recent Codex sessions and trusted projects can be surfaced here so the team can pick up existing context.",
-  },
-];
 
 function planFromRun(run: WorkflowRun): WorkflowPlan {
   return {
@@ -57,136 +75,556 @@ function planFromRun(run: WorkflowRun): WorkflowPlan {
     command_policy: run.command_policy,
     agents: run.agents,
     steps: run.steps,
+    memory_guidance: run.memory_guidance,
     outputs: run.outputs,
     warnings: run.warnings,
   };
 }
 
-function buildBubbles(
-  plan: WorkflowPlan | null,
-  bridge: CodexSessionBridge | null,
-  runtime: ProjectRuntime | null,
-): ChatBubble[] {
-  if (!plan) {
-    const extra = [...defaultBubbles];
-    if (runtime && runtime.state !== "missing") {
-      extra.push({
-        speaker: "Runtime",
-        role: "runtime",
-        text: `Project runtime is ready at ${runtime.runtime_path}. New runs can be stored locally without auto-committing Git.`,
-      });
-    }
-    if (bridge?.commands?.length) {
-      extra.push({
-        speaker: "Codex Bridge",
-        role: "adapter",
-        text: "A resumable Codex bridge command is ready for the selected session and project.",
-      });
-    }
-    return extra;
-  }
-
-  const intro = plan.agents.slice(0, 3).map((agent) => ({
-    speaker: agent.name,
-    role: agent.role,
-    text: agent.reason,
-  }));
-
-  return [
-    {
-      speaker: "System",
-      role: "workflow",
-      text: plan.summary,
-    },
-    ...intro,
-  ];
+function upsertRunRecord(currentRuns: WorkflowRun[], nextRun: WorkflowRun): WorkflowRun[] {
+  const merged = currentRuns.filter((run) => run.id !== nextRun.id);
+  merged.push(nextRun);
+  merged.sort((left, right) => right.created_at.localeCompare(left.created_at));
+  return merged;
 }
 
-function formatDateTime(value: string): string {
-  if (!value) {
-    return "Unknown";
+function runNeedsDangerousApproval(run: WorkflowRun | null): boolean {
+  if (!run) {
+    return false;
   }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  return run.requires_dangerous_command_confirmation && !run.dangerous_commands_confirmed_at;
 }
 
 export default function App() {
+  const { locale, setLocale, t } = useI18n();
+
   const [summary, setSummary] = useState<CodexSummary | null>(null);
   const [capabilities, setCapabilities] = useState<CodexCapabilities | null>(null);
   const [sessions, setSessions] = useState<CodexSession[]>([]);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
-  const [selectedProject, setSelectedProject] = useState<string>("");
-  const [selectedSessionId, setSelectedSessionId] = useState<string>("");
+  const [recentProjects, setRecentProjects] = useState<RecentProjectRecord[]>([]);
+  const [projectCapabilities, setProjectCapabilities] = useState<ProjectCapabilities | null>(null);
+  const [projectRoots, setProjectRoots] = useState<ProjectRootEntry[]>([]);
+  const [browserRoot, setBrowserRoot] = useState("");
+  const [browserEntries, setBrowserEntries] = useState<ProjectTreeEntry[]>([]);
+  const [browserLoading, setBrowserLoading] = useState(false);
+  const [browserError, setBrowserError] = useState("");
+
+  const [selectedProject, setSelectedProject] = useState("");
+  const [manualProjectPath, setManualProjectPath] = useState("");
+  const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [selectedRunId, setSelectedRunId] = useState("");
+  const [activeStage, setActiveStage] = useState<AppStage>("project");
+
   const [task, setTask] = useState(
     "Audit the current repository, design a strict multi-agent workflow, and scaffold the first backend/frontend implementation plan.",
   );
   const [allowNetwork, setAllowNetwork] = useState(true);
   const [allowInstalls, setAllowInstalls] = useState(true);
+
   const [plan, setPlan] = useState<WorkflowPlan | null>(null);
   const [runtime, setRuntime] = useState<ProjectRuntime | null>(null);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [selectedRun, setSelectedRun] = useState<WorkflowRun | null>(null);
+  const [runLog, setRunLog] = useState("");
+  const [runArtifacts, setRunArtifacts] = useState<WorkflowRunArtifacts | null>(null);
+  const [selectedArtifactKey, setSelectedArtifactKey] = useState<WorkflowArtifactDocument["key"]>("report");
+  const [queueDashboard, setQueueDashboard] = useState<WorkflowQueueDashboard | null>(null);
+  const [agentSessions, setAgentSessions] = useState<WorkflowAgentSession[]>([]);
   const [bridge, setBridge] = useState<CodexSessionBridge | null>(null);
+  const [mirrorResult, setMirrorResult] = useState<ProjectRuntimeMirrorResult | null>(null);
+
+  const [bootstrapError, setBootstrapError] = useState("");
+  const [runtimeError, setRuntimeError] = useState("");
+  const [planError, setPlanError] = useState("");
+  const [runError, setRunError] = useState("");
+  const [artifactError, setArtifactError] = useState("");
+  const [queueError, setQueueError] = useState("");
+  const [agentSessionsError, setAgentSessionsError] = useState("");
+  const [bridgeError, setBridgeError] = useState("");
+  const [mirrorError, setMirrorError] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
+  const [artifactLoading, setArtifactLoading] = useState(false);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [agentSessionsLoading, setAgentSessionsLoading] = useState(false);
   const [bridgeLoading, setBridgeLoading] = useState(false);
-  const [bootstrapError, setBootstrapError] = useState<string>("");
-  const [planError, setPlanError] = useState<string>("");
-  const [runtimeError, setRuntimeError] = useState<string>("");
-  const [runError, setRunError] = useState<string>("");
-  const [bridgeError, setBridgeError] = useState<string>("");
+  const [mirrorLoading, setMirrorLoading] = useState(false);
+
+  const artifactRefreshToken = useMemo(() => {
+    if (!selectedRun) {
+      return "";
+    }
+    const trackedSteps = ["research", "implement", "verify", "review", "report", "verify_tests", "verify_build"];
+    const stepToken = selectedRun.step_runs
+      .filter((step) => trackedSteps.includes(step.step_id))
+      .map((step) => `${step.step_id}:${step.status}:${step.completed_at ?? ""}`)
+      .join("|");
+    return `${selectedRun.id}|${selectedRun.status}|${stepToken}`;
+  }, [selectedRun]);
 
   useEffect(() => {
     async function bootstrap() {
       try {
-        const [summaryResult, capabilitiesResult, sessionsResult, projectsResult] = await Promise.all([
+        const search = new URLSearchParams(window.location.search);
+        const projectFromUrl = search.get("project");
+        const runFromUrl = search.get("run");
+        const stageFromUrl = search.get("stage");
+
+        const [
+          summaryResult,
+          capabilitiesResult,
+          sessionsResult,
+          projectsResult,
+          recentProjectsResult,
+          projectCapabilitiesResult,
+          projectRootsResult,
+        ] = await Promise.all([
           getCodexSummary(),
           getCodexCapabilities(),
           getRecentSessions(),
           getDiscoveredProjects(),
+          getRecentProjects(),
+          getProjectCapabilities(),
+          getProjectRoots(),
         ]);
+
         setSummary(summaryResult);
         setCapabilities(capabilitiesResult);
         setSessions(sessionsResult);
         setProjects(projectsResult);
-        if (projectsResult.length > 0) {
-          setSelectedProject(projectsResult[0].path);
+        setRecentProjects(recentProjectsResult);
+        setProjectCapabilities(projectCapabilitiesResult);
+        setProjectRoots(projectRootsResult.roots);
+        if (projectRootsResult.roots[0]) {
+          setBrowserRoot(projectRootsResult.roots[0].path);
+        }
+
+        if (projectFromUrl) {
+          setSelectedProject(projectFromUrl);
+          setManualProjectPath(projectFromUrl);
+        } else if (recentProjectsResult[0]) {
+          setSelectedProject(recentProjectsResult[0].path);
+          setManualProjectPath(recentProjectsResult[0].path);
+        }
+
+        if (runFromUrl) {
+          setSelectedRunId(runFromUrl);
+        }
+        if (stageFromUrl === "project" || stageFromUrl === "build" || stageFromUrl === "run" || stageFromUrl === "diagnostics") {
+          setActiveStage(stageFromUrl);
         }
       } catch (error) {
         setBootstrapError(error instanceof Error ? error.message : "Failed to load app bootstrap data.");
       }
     }
 
-    bootstrap();
+    void bootstrap();
   }, []);
 
   useEffect(() => {
-    async function loadProjectState(projectPath: string) {
-      setRuntimeLoading(true);
-      setRuntimeError("");
-      setRunError("");
+    const search = new URLSearchParams(window.location.search);
+    if (selectedProject) {
+      search.set("project", selectedProject);
+    } else {
+      search.delete("project");
+    }
+    if (selectedRunId) {
+      search.set("run", selectedRunId);
+    } else {
+      search.delete("run");
+    }
+    search.set("stage", activeStage);
+    window.history.replaceState({}, "", `${window.location.pathname}?${search.toString()}`);
+  }, [selectedProject, selectedRunId, activeStage]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBrowserEntries(path: string) {
+      if (!path) {
+        return;
+      }
+      setBrowserLoading(true);
       try {
-        const [runtimeResult, runsResult] = await Promise.all([
-          getProjectRuntime(projectPath),
-          getWorkflowRuns(projectPath),
-        ]);
-        setRuntime(runtimeResult);
-        setRuns(runsResult);
+        const result = await getProjectTree(path, 1);
+        if (!cancelled) {
+          setBrowserEntries(result.entries.filter((entry) => entry.entry_type === "directory"));
+          setBrowserError("");
+        }
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to load project runtime state.";
-        setRuntimeError(message);
+        if (!cancelled) {
+          setBrowserError(error instanceof Error ? error.message : "Failed to browse the project host.");
+        }
       } finally {
-        setRuntimeLoading(false);
+        if (!cancelled) {
+          setBrowserLoading(false);
+        }
       }
     }
 
-    if (!selectedProject) {
-      setRuntime(null);
-      setRuns([]);
+    void loadBrowserEntries(browserRoot);
+    return () => {
+      cancelled = true;
+    };
+  }, [browserRoot]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSelectedRun(runId: string) {
+      try {
+        const [runResult, logResult] = await Promise.all([
+          getWorkflowRun(runId, selectedProject),
+          getWorkflowRunLog(runId, selectedProject),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        setSelectedRun(runResult);
+        setRunLog(logResult.content);
+        setRuns((currentRuns) => upsertRunRecord(currentRuns, runResult));
+      } catch (error) {
+        if (!cancelled) {
+          setRunError(error instanceof Error ? error.message : "Failed to load workflow run details.");
+        }
+      }
+    }
+
+    if (!selectedProject || !selectedRunId) {
+      setSelectedRun(null);
+      setRunLog("");
       return;
     }
-    loadProjectState(selectedProject);
-  }, [selectedProject]);
+
+    void loadSelectedRun(selectedRunId);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProject, selectedRunId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadArtifacts(runId: string) {
+      setArtifactLoading(true);
+      try {
+        const result = await getWorkflowRunArtifacts(runId, selectedProject);
+        if (!cancelled) {
+          setRunArtifacts(result);
+          setArtifactError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setArtifactError(error instanceof Error ? error.message : "Failed to load workflow artifacts.");
+        }
+      } finally {
+        if (!cancelled) {
+          setArtifactLoading(false);
+        }
+      }
+    }
+
+    if (!selectedProject || !selectedRunId || !selectedRun) {
+      setRunArtifacts(null);
+      setArtifactError("");
+      return;
+    }
+
+    void loadArtifacts(selectedRunId);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProject, selectedRunId, selectedRun, artifactRefreshToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadQueueDashboard() {
+      setQueueLoading(true);
+      try {
+        const result = await getWorkflowQueueDashboard();
+        if (!cancelled) {
+          setQueueDashboard(result);
+          setQueueError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setQueueError(error instanceof Error ? error.message : "Failed to load workflow queue.");
+        }
+      } finally {
+        if (!cancelled) {
+          setQueueLoading(false);
+        }
+      }
+    }
+
+    void loadQueueDashboard();
+    const timer = window.setInterval(() => {
+      void loadQueueDashboard();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAgentSessions(runId: string) {
+      setAgentSessionsLoading(true);
+      try {
+        const result = await getWorkflowAgentSessions(runId);
+        if (!cancelled) {
+          setAgentSessions(result);
+          setAgentSessionsError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAgentSessionsError(error instanceof Error ? error.message : "Failed to load agent sessions.");
+        }
+      } finally {
+        if (!cancelled) {
+          setAgentSessionsLoading(false);
+        }
+      }
+    }
+
+    if (!selectedRunId) {
+      setAgentSessions([]);
+      setAgentSessionsError("");
+      return;
+    }
+
+    void loadAgentSessions(selectedRunId);
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRunId, artifactRefreshToken]);
+
+  useEffect(() => {
+    setSelectedArtifactKey((currentKey) => {
+      if (runArtifacts?.documents.some((document) => document.key === currentKey)) {
+        return currentKey;
+      }
+      return runArtifacts?.documents.find((document) => document.available)?.key ?? "report";
+    });
+  }, [runArtifacts]);
+
+  useEffect(() => {
+    if (!selectedProject || !selectedRunId || selectedRun?.status !== "running") {
+      return;
+    }
+
+    const stream = new EventSource(getWorkflowRunEventsUrl(selectedRunId, selectedProject));
+    let closedByTerminalEvent = false;
+
+    const handleRunUpdate = (event: MessageEvent<string>) => {
+      try {
+        const payload = parseWorkflowRunEvent(event.data);
+        setSelectedRun(payload.run);
+        setRunLog(payload.log.content);
+        setRuns((currentRuns) => upsertRunRecord(currentRuns, payload.run));
+        if (payload.terminal) {
+          closedByTerminalEvent = true;
+          stream.close();
+        }
+      } catch (error) {
+        setRunError(error instanceof Error ? error.message : "Failed to process workflow run event.");
+      }
+    };
+
+    const handleError = () => {
+      if (!closedByTerminalEvent) {
+        setRunError("Realtime workflow stream disconnected. The latest snapshot is still available.");
+      }
+      stream.close();
+    };
+
+    stream.addEventListener("run_update", handleRunUpdate as EventListener);
+    stream.addEventListener("error", handleError as EventListener);
+    return () => {
+      stream.removeEventListener("run_update", handleRunUpdate as EventListener);
+      stream.removeEventListener("error", handleError as EventListener);
+      stream.close();
+    };
+  }, [selectedProject, selectedRunId, selectedRun?.status]);
+
+  async function loadProjectState(projectPath: string): Promise<void> {
+    setRuntimeLoading(true);
+    setRuntimeError("");
+    setRunError("");
+    try {
+      const [runtimeResult, runsResult, recentResult] = await Promise.all([
+        getProjectRuntime(projectPath),
+        getWorkflowRuns(projectPath),
+        getRecentProjects(),
+      ]);
+      setSelectedProject(projectPath);
+      setManualProjectPath(projectPath);
+      setRuntime(runtimeResult);
+      setRuns(runsResult);
+      setRecentProjects(recentResult);
+      setSelectedRunId((currentRunId) => {
+        if (runsResult.some((run) => run.id === currentRunId)) {
+          return currentRunId;
+        }
+        return runsResult[0]?.id ?? "";
+      });
+      setActiveStage("build");
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Failed to load project runtime state.");
+    } finally {
+      setRuntimeLoading(false);
+    }
+  }
+
+  function formatDateTime(value: string): string {
+    if (!value) {
+      return t("common.unknown");
+    }
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? value
+      : new Intl.DateTimeFormat(locale, {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(date);
+  }
+
+  function backendLabel(backend: WorkflowRun["steps"][number]["backend"]): string {
+    return t(`backend.${backend}`);
+  }
+
+  function executionLabel(execution: WorkflowPlan["steps"][number]["execution"]): string {
+    return t(`execution.${execution}`);
+  }
+
+  function sourceLabel(source: ProjectRecord["source"]): string {
+    return t(`project.source.${source}`);
+  }
+
+  function statusLabel(status: string): string {
+    return t(`status.${status}`);
+  }
+
+  function runStatusNote(run: WorkflowRun): string | null {
+    if (runNeedsDangerousApproval(run)) {
+      return t("run.awaitingApproval");
+    }
+    if (run.status === "running" && run.cancel_requested_at) {
+      return `${t("run.cancelRun")} · ${formatDateTime(run.cancel_requested_at)}`;
+    }
+    if (run.status === "cancelled" && run.cancelled_at) {
+      return `${t("status.cancelled")} · ${formatDateTime(run.cancelled_at)}`;
+    }
+    if (run.dangerous_commands_confirmed_at) {
+      return `${t("run.safetyApproved")} · ${formatDateTime(run.dangerous_commands_confirmed_at)}`;
+    }
+    if (run.attempt_count > 1) {
+      return `${t("run.attempt")} ${run.attempt_count}`;
+    }
+    return null;
+  }
+
+  function memorySummary(entries: MemoryEntry[]): string {
+    if (entries.length === 0) {
+      return t("common.none");
+    }
+    return entries.map((entry) => entry.title).join(" | ");
+  }
+
+  function finalizedStepCount(run: WorkflowRun): number {
+    return run.step_runs.filter((step) => !["pending", "running"].includes(step.status)).length;
+  }
+
+  function readyArtifactCount(artifacts: WorkflowRunArtifacts | null): number {
+    if (!artifacts) {
+      return 0;
+    }
+    return artifacts.documents.filter((document) => document.available).length;
+  }
+
+  function writtenMemoryCount(run: WorkflowRun | null): number {
+    if (!run) {
+      return 0;
+    }
+    return run.memory_context.written_project.length + run.memory_context.written_global.length;
+  }
+
+  function recalledMemoryCount(run: WorkflowRun | null): number {
+    if (!run) {
+      return 0;
+    }
+    return run.memory_context.recalled_project.length + run.memory_context.recalled_global.length;
+  }
+
+  function promotedGlobalRuleCount(run: WorkflowRun | null): number {
+    if (!run) {
+      return 0;
+    }
+    return run.memory_context.written_global.filter((entry) => entry.entry_kind === "global_rule").length;
+  }
+
+  function queueItemNote(item: WorkflowQueueItem): string {
+    if (item.status === "running" && item.worker_id) {
+      return item.target_step_id
+        ? t("queue.branchOwnedBy", { step: item.target_step_id, worker: item.worker_id })
+        : t("queue.ownedBy", { worker: item.worker_id });
+    }
+    if (item.status === "queued") {
+      return item.target_step_id
+        ? t("queue.queuedBranch", { step: item.target_step_id })
+        : t("queue.queuedFor", { mode: item.mode });
+    }
+    if (item.error) {
+      return item.error;
+    }
+    return t(`status.${item.status}`);
+  }
+
+  async function handleOpenProject(path: string, source: "manual" | "picker" | "codex-config" | "filesystem" = "manual") {
+    const normalized = path.trim();
+    if (!normalized) {
+      setRuntimeError(t("project.notSelected"));
+      return;
+    }
+    try {
+      const workspace = await openWorkspace({
+        project_path: normalized,
+        source,
+      });
+      await loadProjectState(workspace.project_path);
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Failed to open the project.");
+    }
+  }
+
+  async function handlePickProject() {
+    setRuntimeError("");
+    try {
+      const result = await pickProjectDirectory();
+      if (result.path) {
+        await handleOpenProject(result.path, "picker");
+      }
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "Failed to open the native folder picker.");
+    }
+  }
+
+  function handleBrowseRoot(path: string) {
+    setBrowserRoot(path);
+  }
+
+  async function handleOpenFromBrowser(path: string) {
+    await handleOpenProject(path, "filesystem");
+  }
 
   async function handleDraftWorkflow() {
     setLoading(true);
@@ -199,6 +637,7 @@ export default function App() {
         allow_installs: allowInstalls,
       });
       setPlan(result);
+      setActiveStage("build");
     } catch (error) {
       setPlanError(error instanceof Error ? error.message : "Failed to draft workflow.");
     } finally {
@@ -208,10 +647,9 @@ export default function App() {
 
   async function handleInitRuntime() {
     if (!selectedProject) {
-      setRuntimeError("Select a project first.");
+      setRuntimeError(t("project.notSelected"));
       return;
     }
-
     setRuntimeLoading(true);
     setRuntimeError("");
     try {
@@ -221,6 +659,56 @@ export default function App() {
       setRuntimeError(error instanceof Error ? error.message : "Failed to initialize the project runtime.");
     } finally {
       setRuntimeLoading(false);
+    }
+  }
+
+  async function handleMirrorRuntime() {
+    if (!selectedProject) {
+      setMirrorError(t("project.notSelected"));
+      return;
+    }
+    setMirrorLoading(true);
+    setMirrorError("");
+    try {
+      setMirrorResult(await mirrorProjectRuntime(selectedProject));
+    } catch (error) {
+      setMirrorError(error instanceof Error ? error.message : "Failed to mirror the project control plane.");
+    } finally {
+      setMirrorLoading(false);
+    }
+  }
+
+  async function handleExportRuntime() {
+    if (!selectedProject) {
+      setMirrorError(t("project.notSelected"));
+      return;
+    }
+    setMirrorLoading(true);
+    setMirrorError("");
+    try {
+      setMirrorResult(await exportProjectRuntime(selectedProject));
+    } catch (error) {
+      setMirrorError(error instanceof Error ? error.message : "Failed to export the project control plane.");
+    } finally {
+      setMirrorLoading(false);
+    }
+  }
+
+  async function handleImportRuntime() {
+    if (!selectedProject) {
+      setMirrorError(t("project.notSelected"));
+      return;
+    }
+    setMirrorLoading(true);
+    setMirrorError("");
+    try {
+      const result = await importProjectRuntime(selectedProject);
+      setMirrorResult(result);
+      await loadProjectState(selectedProject);
+    } catch (error) {
+      setMirrorError(error instanceof Error ? error.message : "Failed to import the project control plane.");
+    } finally {
+      setMirrorLoading(false);
     }
   }
 
@@ -245,10 +733,9 @@ export default function App() {
 
   async function handleCreateRun() {
     if (!selectedProject) {
-      setRunError("Select a project before creating a workflow run.");
+      setRunError(t("project.notSelected"));
       return;
     }
-
     setRunLoading(true);
     setRunError("");
     try {
@@ -259,14 +746,19 @@ export default function App() {
         allow_installs: allowInstalls,
         codex_session_id: selectedSessionId || null,
         resume_prompt: selectedSessionId ? task : undefined,
+        start_immediately: true,
       });
       setPlan(planFromRun(result));
+      setSelectedRunId(result.id);
+      setSelectedRun(result);
+      setRunLog("");
       const [runtimeResult, runsResult] = await Promise.all([
         getProjectRuntime(selectedProject),
         getWorkflowRuns(selectedProject),
       ]);
       setRuntime(runtimeResult);
-      setRuns(runsResult);
+      setRuns(upsertRunRecord(runsResult, result));
+      setActiveStage("run");
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "Failed to create the workflow run.");
     } finally {
@@ -274,281 +766,250 @@ export default function App() {
     }
   }
 
-  const bubbles = buildBubbles(plan, bridge, runtime);
+  async function handleExecuteRun(runId: string) {
+    if (!selectedProject) {
+      setRunError(t("project.notSelected"));
+      return;
+    }
+    setRunLoading(true);
+    setRunError("");
+    try {
+      const result = await executeWorkflowRun(runId, selectedProject);
+      setSelectedRunId(result.id);
+      setSelectedRun(result);
+      setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
+      setActiveStage("run");
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Failed to start the workflow run.");
+    } finally {
+      setRunLoading(false);
+    }
+  }
+
+  async function handleCancelRun(runId: string) {
+    if (!selectedProject) {
+      setRunError(t("project.notSelected"));
+      return;
+    }
+    setRunLoading(true);
+    setRunError("");
+    try {
+      const result = await cancelWorkflowRun(runId, selectedProject);
+      setSelectedRunId(result.id);
+      setSelectedRun(result);
+      setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Failed to cancel the workflow run.");
+    } finally {
+      setRunLoading(false);
+    }
+  }
+
+  async function handleApproveRun(runId: string) {
+    if (!selectedProject) {
+      setRunError(t("project.notSelected"));
+      return;
+    }
+    setRunLoading(true);
+    setRunError("");
+    try {
+      const result = await approveDangerousCommands(runId, selectedProject);
+      setSelectedRunId(result.id);
+      setSelectedRun(result);
+      setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Failed to approve dangerous commands for the workflow run.");
+    } finally {
+      setRunLoading(false);
+    }
+  }
+
+  async function handleResumeRun(runId: string) {
+    if (!selectedProject) {
+      setRunError(t("project.notSelected"));
+      return;
+    }
+    setRunLoading(true);
+    setRunError("");
+    try {
+      const result = await resumeWorkflowRun(runId, selectedProject);
+      setSelectedRunId(result.id);
+      setSelectedRun(result);
+      setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
+      setActiveStage("run");
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Failed to resume the workflow run.");
+    } finally {
+      setRunLoading(false);
+    }
+  }
+
+  async function handleRetryRun(runId: string) {
+    if (!selectedProject) {
+      setRunError(t("project.notSelected"));
+      return;
+    }
+    setRunLoading(true);
+    setRunError("");
+    try {
+      const result = await retryWorkflowRun(runId, selectedProject);
+      setSelectedRunId(result.id);
+      setSelectedRun(result);
+      setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
+      setActiveStage("run");
+    } catch (error) {
+      setRunError(error instanceof Error ? error.message : "Failed to retry the workflow run.");
+    } finally {
+      setRunLoading(false);
+    }
+  }
+
+  async function handleCancelQueueItem(itemId: string) {
+    setQueueLoading(true);
+    try {
+      await cancelWorkflowQueueItem(itemId);
+      setQueueDashboard(await getWorkflowQueueDashboard());
+      setQueueError("");
+    } catch (error) {
+      setQueueError(error instanceof Error ? error.message : "Failed to cancel the queue item.");
+    } finally {
+      setQueueLoading(false);
+    }
+  }
+
+  async function handleRequeueQueueItem(itemId: string) {
+    setQueueLoading(true);
+    try {
+      await requeueWorkflowQueueItem(itemId);
+      setQueueDashboard(await getWorkflowQueueDashboard());
+      setQueueError("");
+    } catch (error) {
+      setQueueError(error instanceof Error ? error.message : "Failed to requeue the queue item.");
+    } finally {
+      setQueueLoading(false);
+    }
+  }
 
   return (
-    <div className="shell">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Local-First Multi-Agent Workbench</p>
-          <h1>Agents Team</h1>
-          <p className="hero-copy">
-            A team-room UI for orchestrating planner, coder, runner, reviewer, and summarizer agents
-            across multiple local projects while staying close to Codex.
-          </p>
-        </div>
-        <div className="hero-status">
-          <div className="status-card">
-            <span className="status-label">Codex bridge</span>
-            <strong>{summary?.codex_cli_available ? "Detected" : "Unavailable"}</strong>
-            <span>{capabilities?.version ?? summary?.integration_mode ?? "waiting for backend"}</span>
-          </div>
-          <div className="status-card accent">
-            <span className="status-label">Workflow mode</span>
-            <strong>Strict</strong>
-            <span>Serial + parallel by step</span>
-          </div>
-        </div>
-      </header>
+    <div className="shell tech-shell">
+      <div className="shell-backdrop" />
+      <AppHeader t={t} locale={locale} onLocaleChange={setLocale} summary={summary} capabilities={capabilities} />
 
       {bootstrapError ? <div className="banner error">{bootstrapError}</div> : null}
 
-      <main className="workspace">
-        <section className="panel sidebar">
-          <div className="panel-header">
-            <h2>Projects</h2>
-            <span>{projects.length} discovered</span>
-          </div>
+      <StageNav t={t} activeStage={activeStage} onStageChange={setActiveStage} />
 
-          <div className="project-list">
-            {projects.length === 0 ? (
-              <div className="empty-state">No projects discovered yet from the local Codex config.</div>
-            ) : (
-              projects.map((project) => (
-                <button
-                  key={project.path}
-                  type="button"
-                  className={`project-item ${selectedProject === project.path ? "selected" : ""}`}
-                  onClick={() => setSelectedProject(project.path)}
-                >
-                  <span className="project-path">{project.path}</span>
-                  <span className="project-meta">{project.source}</span>
-                </button>
-              ))
-            )}
-          </div>
+      {activeStage === "project" ? (
+        <ProjectStage
+          t={t}
+          projects={projects}
+          recentProjects={recentProjects}
+          projectRoots={projectRoots}
+          browserRoot={browserRoot}
+          browserEntries={browserEntries}
+          browserLoading={browserLoading}
+          browserError={browserError}
+          selectedProject={selectedProject}
+          manualProjectPath={manualProjectPath}
+          onManualProjectPathChange={setManualProjectPath}
+          onOpenProject={(path, source) => void handleOpenProject(path, source)}
+          onPickProject={() => void handlePickProject()}
+          onBrowseRoot={handleBrowseRoot}
+          onOpenFromBrowser={(path) => void handleOpenFromBrowser(path)}
+          pickerAvailable={Boolean(projectCapabilities?.native_picker_available)}
+          runtime={runtime}
+          runtimeLoading={runtimeLoading}
+          runtimeError={runtimeError}
+          onInitRuntime={() => void handleInitRuntime()}
+          onMirrorRuntime={() => void handleMirrorRuntime()}
+          onExportRuntime={() => void handleExportRuntime()}
+          onImportRuntime={() => void handleImportRuntime()}
+          mirrorLoading={mirrorLoading}
+          mirrorResult={mirrorResult}
+          mirrorError={mirrorError}
+          sourceLabel={sourceLabel}
+        />
+      ) : null}
 
-          <div className="panel-header subheader">
-            <h2>Codex bridge</h2>
-            <span>{sessions.length} recent sessions</span>
-          </div>
-          <div className="meta-grid">
-            <div>
-              <span className="meta-label">Config path</span>
-              <strong>{summary?.config_path ?? "Unavailable"}</strong>
-            </div>
-            <div>
-              <span className="meta-label">Session index</span>
-              <strong>{summary?.session_index_path ?? "Unavailable"}</strong>
-            </div>
-            <div>
-              <span className="meta-label">Capabilities</span>
-              <strong>
-                {capabilities?.resume_available ? "resume" : "no resume"} /{" "}
-                {capabilities?.exec_resume_available ? "exec resume" : "no exec resume"}
-              </strong>
-            </div>
-          </div>
-          <div className="session-list">
-            {sessions.map((session) => (
-              <button
-                key={session.id}
-                type="button"
-                className={`session-item ${selectedSessionId === session.id ? "selected" : ""}`}
-                onClick={() => handlePrepareBridge(session.id)}
-              >
-                <strong>{session.thread_name}</strong>
-                <span>{formatDateTime(session.updated_at)}</span>
-                <code>{session.id}</code>
-              </button>
-            ))}
-          </div>
+      {activeStage === "build" ? (
+        <BuildStage
+          t={t}
+          selectedProject={selectedProject}
+          sessions={sessions}
+          selectedSessionId={selectedSessionId}
+          bridge={bridge}
+          bridgeLoading={bridgeLoading}
+          bridgeError={bridgeError}
+          task={task}
+          allowNetwork={allowNetwork}
+          allowInstalls={allowInstalls}
+          plan={plan}
+          loading={loading}
+          runLoading={runLoading}
+          planError={planError}
+          runError={runError}
+          backendLabel={backendLabel}
+          executionLabel={executionLabel}
+          onTaskChange={setTask}
+          onAllowNetworkChange={setAllowNetwork}
+          onAllowInstallsChange={setAllowInstalls}
+          onPrepareBridge={(sessionId) => void handlePrepareBridge(sessionId)}
+          onDraftWorkflow={() => void handleDraftWorkflow()}
+          onCreateRun={() => void handleCreateRun()}
+        />
+      ) : null}
 
-          <div className="panel-header subheader">
-            <h2>Project runtime</h2>
-            <span>{runtime?.state ?? "waiting"}</span>
-          </div>
-          <div className="runtime-card">
-            <div className="meta-grid compact">
-              <div>
-                <span className="meta-label">Runtime path</span>
-                <strong>{runtime?.runtime_path ?? "Not initialized"}</strong>
-              </div>
-              <div>
-                <span className="meta-label">Policy</span>
-                <strong>{runtime?.policy.git_strategy ?? "manual"} / project + global memory</strong>
-              </div>
-            </div>
-            <div className="button-row">
-              <button type="button" className="secondary-button" onClick={handleInitRuntime} disabled={runtimeLoading}>
-                {runtimeLoading ? "Initializing..." : "Initialize .agents-team"}
-              </button>
-            </div>
-            {runtimeError ? <div className="inline-error">{runtimeError}</div> : null}
-          </div>
+      {activeStage === "run" ? (
+        <RunStage
+          t={t}
+          selectedProject={selectedProject}
+          runs={runs}
+          selectedRunId={selectedRunId}
+          selectedRun={selectedRun}
+          runArtifacts={runArtifacts}
+          artifactLoading={artifactLoading}
+          artifactError={artifactError}
+          runLog={runLog}
+          agentSessions={agentSessions}
+          agentSessionsLoading={agentSessionsLoading}
+          agentSessionsError={agentSessionsError}
+          selectedArtifactKey={selectedArtifactKey}
+          onSelectRun={setSelectedRunId}
+          onSelectArtifact={setSelectedArtifactKey}
+          onExecuteRun={(runId) => void handleExecuteRun(runId)}
+          onCancelRun={(runId) => void handleCancelRun(runId)}
+          onApproveRun={(runId) => void handleApproveRun(runId)}
+          onResumeRun={(runId) => void handleResumeRun(runId)}
+          onRetryRun={(runId) => void handleRetryRun(runId)}
+          runLoading={runLoading}
+          runNeedsDangerousApproval={runNeedsDangerousApproval}
+          runStatusNote={runStatusNote}
+          backendLabel={backendLabel}
+          statusLabel={statusLabel}
+          formatDateTime={formatDateTime}
+          memorySummary={memorySummary}
+          finalizedStepCount={finalizedStepCount}
+          readyArtifactCount={readyArtifactCount}
+          writtenMemoryCount={writtenMemoryCount}
+          recalledMemoryCount={recalledMemoryCount}
+          promotedGlobalRuleCount={promotedGlobalRuleCount}
+        />
+      ) : null}
 
-          <div className="panel-header subheader">
-            <h2>Bridge commands</h2>
-            <span>{bridgeLoading ? "preparing" : bridge?.can_resume ? "ready" : "idle"}</span>
-          </div>
-          <div className="command-list">
-            {bridge?.commands?.length ? (
-              bridge.commands.map((command) => (
-                <article key={`${command.mode}-${command.argv.join(" ")}`} className="command-item">
-                  <strong>{command.purpose}</strong>
-                  <span className="meta-label">{command.mode}</span>
-                  <code>{command.argv.join(" ")}</code>
-                </article>
-              ))
-            ) : (
-              <div className="empty-state">Pick a recent session to preview resumable Codex bridge commands.</div>
-            )}
-          </div>
-          {bridgeError ? <div className="inline-error">{bridgeError}</div> : null}
-        </section>
-
-        <section className="panel team-room">
-          <div className="panel-header">
-            <h2>Team room</h2>
-            <span>Natural language first</span>
-          </div>
-
-          <div className="chat-log">
-            {bubbles.map((bubble, index) => (
-              <article key={`${bubble.speaker}-${index}`} className="bubble">
-                <div className="bubble-meta">
-                  <strong>{bubble.speaker}</strong>
-                  <span>{bubble.role}</span>
-                </div>
-                <p>{bubble.text}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="composer">
-            <label htmlFor="task" className="field-label">
-              Task draft
-            </label>
-            <textarea id="task" value={task} onChange={(event) => setTask(event.target.value)} rows={7} />
-            <div className="toggle-row">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={allowNetwork}
-                  onChange={(event) => setAllowNetwork(event.target.checked)}
-                />
-                Allow network search
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={allowInstalls}
-                  onChange={(event) => setAllowInstalls(event.target.checked)}
-                />
-                Allow package installs
-              </label>
-            </div>
-            <div className="composer-footer">
-              <span className="project-pill">{selectedProject || "No project selected"}</span>
-              <div className="button-row">
-                <button type="button" className="secondary-button" onClick={handleDraftWorkflow} disabled={loading || task.trim().length < 8}>
-                  {loading ? "Drafting..." : "Draft workflow"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCreateRun}
-                  disabled={runLoading || task.trim().length < 8 || !selectedProject}
-                >
-                  {runLoading ? "Creating..." : "Create run record"}
-                </button>
-              </div>
-            </div>
-            {planError ? <div className="inline-error">{planError}</div> : null}
-            {runError ? <div className="inline-error">{runError}</div> : null}
-          </div>
-        </section>
-
-        <section className="panel workflow">
-          <div className="panel-header">
-            <h2>Workflow draft</h2>
-            <span>{plan?.team_name ?? "waiting for task"}</span>
-          </div>
-
-          <div className="workflow-summary">
-            <p>{plan?.summary ?? "Draft a task to generate the first multi-agent workflow plan."}</p>
-          </div>
-
-          <div className="agent-grid">
-            {(plan?.agents ?? []).map((agent) => (
-              <article key={agent.role} className="agent-card">
-                <span className="agent-role">{agent.role}</span>
-                <strong>{agent.name}</strong>
-                <p>{agent.reason}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="step-list">
-            {(plan?.steps ?? []).map((step) => (
-              <article key={step.id} className="step-item">
-                <div className="step-header">
-                  <strong>{step.title}</strong>
-                  <span className={`step-mode ${step.execution}`}>{step.execution}</span>
-                </div>
-                <p>{step.goal}</p>
-                <div className="step-meta">
-                  <span>{step.agent_role}</span>
-                  {step.requires_confirmation ? <span>dangerous commands require confirmation</span> : null}
-                </div>
-              </article>
-            ))}
-          </div>
-
-          <div className="outputs">
-            <h3>Expected outputs</h3>
-            <ul>
-              {(plan?.outputs ?? ["code changes", "reports", "logs"]).map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </div>
-
-          {plan?.warnings?.length ? (
-            <div className="warnings">
-              <h3>Warnings</h3>
-              <ul>
-                {plan.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <div className="panel-header subheader">
-            <h2>Run ledger</h2>
-            <span>{runs.length} runs</span>
-          </div>
-          <div className="run-list">
-            {runs.length === 0 ? (
-              <div className="empty-state">No workflow runs have been created for the selected project yet.</div>
-            ) : (
-              runs.map((run) => (
-                <article key={run.id} className="run-item">
-                  <div className="step-header">
-                    <strong>{run.team_name}</strong>
-                    <span className={`step-mode ${run.status === "planned" ? "parallel" : "serial"}`}>{run.status}</span>
-                  </div>
-                  <p>{run.task}</p>
-                  <div className="step-meta">
-                    <span>{formatDateTime(run.created_at)}</span>
-                    <span>{run.codex_session_id ? `linked to ${run.codex_session_id}` : "new Codex run path"}</span>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-      </main>
+      {activeStage === "diagnostics" ? (
+        <DiagnosticsStage
+          t={t}
+          queueDashboard={queueDashboard}
+          queueLoading={queueLoading}
+          queueError={queueError}
+          bridge={bridge}
+          bridgeError={bridgeError}
+          mirrorResult={mirrorResult}
+          queueItemNote={queueItemNote}
+          onCancelQueueItem={(itemId) => void handleCancelQueueItem(itemId)}
+          onRequeueQueueItem={(itemId) => void handleRequeueQueueItem(itemId)}
+        />
+      ) : null}
     </div>
   );
 }

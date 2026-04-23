@@ -21,6 +21,12 @@ Local services
     - Codex adapter
     ->
 Execution layer
+    - persistent SQLite-backed run queue
+    - queue worker and recovery loop
+    - worker ownership, heartbeats, and leases
+    - step-scoped agent session tracking
+    - dependency-aware workflow graph scheduler
+    - separately claimed branch jobs for parallel waves
     - Codex-backed runs
     - shell commands
     - Python tasks
@@ -44,6 +50,7 @@ A strict multi-step plan such as:
 `planner -> coder -> runner/tester -> reviewer -> summarizer`
 
 Steps may run in serial or parallel depending on the task.
+The runtime should treat this as a dependency graph rather than a flat ordered list, so independent verification waves can execute concurrently and then rejoin before review/report.
 
 ### Artifact
 
@@ -66,6 +73,7 @@ Use the app's global home directory for:
 - project registry
 - global memory
 - cached Codex session metadata
+- the persistent control-plane SQLite database for queue state and run metadata
 
 ### Project-local runtime
 
@@ -76,6 +84,7 @@ Use `<project>/.agents-team/` for:
 - project memory
 - logs
 - artifact indexes
+- project-local control-plane mirror/export snapshots
 
 ## Codex integration
 
@@ -105,6 +114,18 @@ CLI and service entry points are a safer integration boundary.
 - network access and package installation must be user-editable settings
 - Git commit and push stay human-controlled in V1
 
+## Runtime orchestration
+
+- workflow start, resume, and retry should enqueue durable jobs before execution begins
+- queue claims should be atomic across backend processes
+- run metadata and queue metadata should share a consistent persistent store
+- worker ownership should be explicit and renewed through heartbeats / leases while work is active
+- each workflow step should be observable as its own agent session, not only as a field on the final run record
+- dependency-aware schedulers should be able to emit parallel branch jobs that different workers can claim independently
+- branch failure policy should be explicit: some downstream steps such as review may continue on failed verification branches while the overall run still resolves to failed
+- backend startup should recover interrupted queue items and orphaned running runs
+- synchronous execution paths may still exist for tests, but product traffic should flow through the queue worker
+
 ## First implementation target
 
 The first milestone should deliver:
@@ -115,3 +136,12 @@ The first milestone should deliver:
 - Codex summary and recent-session visibility
 - workflow planning endpoint
 - UI for drafting a task and viewing the proposed team and step plan
+
+## Frontend UX direction
+
+- the primary user path should be single-project -> build team -> run cockpit
+- diagnostics should exist, but as a secondary stage rather than the dominant first view
+- UI text should support both Chinese and English
+- local project opening should support backend-persisted recent projects, manual paths, discovered projects, and backend-host filesystem browsing with a native folder picker bridge when available
+- URL state should preserve the current stage and selected project/run so browser refresh and shared links degrade gracefully
+- the visual language should feel like a focused dark-tech product, not a warm admin dashboard

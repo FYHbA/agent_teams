@@ -52,6 +52,52 @@ export type ProjectRecord = {
   trusted: boolean;
 };
 
+export type ProjectRootEntry = {
+  name: string;
+  path: string;
+};
+
+export type ProjectTreeEntry = {
+  name: string;
+  path: string;
+  entry_type: "file" | "directory";
+  children: ProjectTreeEntry[];
+};
+
+export type ProjectTreeResponse = {
+  root: string;
+  entries: ProjectTreeEntry[];
+};
+
+export type WorkspaceRecord = {
+  id: string;
+  name: string;
+  alias: string;
+  project_path: string;
+  runtime_path: string;
+  source: "codex-config" | "filesystem" | "manual" | "picker";
+  trusted: boolean;
+  updated_at: string;
+  last_opened_at: string | null;
+};
+
+export type ProjectPickResult = {
+  path: string | null;
+};
+
+export type ProjectCapabilities = {
+  native_picker_available: boolean;
+};
+
+export type RecentProjectRecord = {
+  workspace_id: string;
+  name: string;
+  alias: string;
+  path: string;
+  runtime_path: string;
+  updated_at: string;
+};
+
 export type ProjectRuntimePolicy = {
   allow_network: boolean;
   allow_installs: boolean;
@@ -62,6 +108,9 @@ export type ProjectRuntimePolicy = {
 };
 
 export type ProjectRuntime = {
+  workspace_id: string | null;
+  workspace_name: string | null;
+  workspace_alias: string | null;
   project_path: string;
   runtime_path: string;
   state: "missing" | "initialized" | "existing";
@@ -69,6 +118,16 @@ export type ProjectRuntime = {
   directories: string[];
   policy: ProjectRuntimePolicy;
   global_home: string;
+};
+
+export type ProjectRuntimeMirrorResult = {
+  operation: "mirror" | "export" | "import";
+  project_path: string;
+  path: string;
+  run_count: number;
+  queue_item_count: number;
+  agent_session_count: number;
+  generated_at: string;
 };
 
 export type AgentCard = {
@@ -81,9 +140,69 @@ export type WorkflowStep = {
   id: string;
   title: string;
   agent_role: string;
+  backend:
+    | "planner_backend"
+    | "research_backend"
+    | "codex_backend"
+    | "verify_backend"
+    | "reviewer_backend"
+    | "reporter_backend";
   execution: "serial" | "parallel";
   goal: string;
+  depends_on: string[];
+  allow_failed_dependencies: boolean;
   requires_confirmation: boolean;
+};
+
+export type MemoryEntry = {
+  id: string;
+  scope: "project" | "global";
+  entry_kind: "handoff" | "research_finding" | "verification_finding" | "global_rule";
+  source_step_id: "research" | "verify" | null;
+  step_status: "completed" | "failed" | null;
+  created_at: string;
+  source_run_id: string | null;
+  attempt_count: number | null;
+  title: string;
+  summary: string;
+  details: string;
+  tags: string[];
+};
+
+export type WorkflowMemoryContext = {
+  project_memory_path: string;
+  global_memory_path: string | null;
+  recalled_project: MemoryEntry[];
+  recalled_global: MemoryEntry[];
+  written_project: MemoryEntry[];
+  written_global: MemoryEntry[];
+};
+
+export type WorkflowRoleMemoryGuidance = {
+  planner: string[];
+  reviewer: string[];
+  reporter: string[];
+};
+
+export type WorkflowStepRun = {
+  step_id: string;
+  title: string;
+  agent_role: string;
+  backend:
+    | "planner_backend"
+    | "research_backend"
+    | "codex_backend"
+    | "verify_backend"
+    | "reviewer_backend"
+    | "reporter_backend";
+  execution: "serial" | "parallel";
+  goal: string;
+  depends_on: string[];
+  allow_failed_dependencies: boolean;
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled";
+  started_at: string | null;
+  completed_at: string | null;
+  summary: string | null;
 };
 
 export type WorkflowPlan = {
@@ -95,6 +214,7 @@ export type WorkflowPlan = {
   command_policy: string;
   agents: AgentCard[];
   steps: WorkflowStep[];
+  memory_guidance: WorkflowRoleMemoryGuidance;
   outputs: string[];
   warnings: string[];
 };
@@ -102,17 +222,26 @@ export type WorkflowPlan = {
 export type WorkflowRun = {
   id: string;
   status: "planned" | "running" | "completed" | "failed" | "cancelled";
+  attempt_count: number;
   created_at: string;
   updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  cancel_requested_at: string | null;
+  cancelled_at: string | null;
   task: string;
   project_path: string;
   runtime_path: string;
   run_path: string;
   report_path: string;
   changes_path: string;
-  memory_scope: "project+global";
+  log_path: string;
+  last_message_path: string | null;
+  memory_scope: "project" | "project+global";
   git_strategy: "manual";
   direct_file_editing: boolean;
+  requires_dangerous_command_confirmation: boolean;
+  dangerous_commands_confirmed_at: string | null;
   team_name: string;
   summary: string;
   allow_network: boolean;
@@ -122,6 +251,101 @@ export type WorkflowRun = {
   steps: WorkflowStep[];
   outputs: string[];
   warnings: string[];
+  error: string | null;
+  step_runs: WorkflowStepRun[];
+  memory_context: WorkflowMemoryContext;
+  memory_guidance: WorkflowRoleMemoryGuidance;
   codex_session_id: string | null;
   codex_commands: CodexCommandSpec[];
+};
+
+export type WorkflowRunLog = {
+  run_id: string;
+  log_path: string;
+  content: string;
+};
+
+export type WorkflowRunEvent = {
+  run: WorkflowRun;
+  log: WorkflowRunLog;
+  terminal: boolean;
+};
+
+export type WorkflowArtifactDocument = {
+  key: "planning_brief" | "report" | "changes" | "last_message" | "project_snapshot" | "verification_brief" | "memory_context";
+  title: string;
+  path: string | null;
+  content_type: "markdown" | "text";
+  available: boolean;
+  content: string;
+};
+
+export type WorkflowRunArtifacts = {
+  run_id: string;
+  documents: WorkflowArtifactDocument[];
+};
+
+export type WorkflowQueueItem = {
+  id: string;
+  run_id: string;
+  project_path: string | null;
+  mode: "start" | "resume" | "retry";
+  item_kind: "run" | "step";
+  target_step_id: string | null;
+  branch_group_id: string | null;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  prepared: boolean;
+  enqueued_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  worker_id: string | null;
+  heartbeat_at: string | null;
+  lease_expires_at: string | null;
+};
+
+export type WorkflowWorker = {
+  worker_id: string;
+  thread_name: string;
+  process_id: number;
+  host: string;
+  status: "idle" | "running";
+  started_at: string;
+  last_heartbeat_at: string;
+  current_item_id: string | null;
+  current_run_id: string | null;
+};
+
+export type WorkflowQueueDashboard = {
+  items: WorkflowQueueItem[];
+  workers: WorkflowWorker[];
+  queued_count: number;
+  running_count: number;
+  terminal_count: number;
+  stale_count: number;
+};
+
+export type WorkflowAgentSession = {
+  id: string;
+  run_id: string;
+  step_id: string;
+  title: string;
+  agent_role: string;
+  backend:
+    | "planner_backend"
+    | "research_backend"
+    | "codex_backend"
+    | "verify_backend"
+    | "reviewer_backend"
+    | "reporter_backend";
+  execution: "serial" | "parallel";
+  status: "running" | "completed" | "failed" | "cancelled";
+  owner_worker_id: string | null;
+  provider: string | null;
+  session_ref: string | null;
+  started_at: string;
+  completed_at: string | null;
+  summary: string | null;
+  error: string | null;
 };

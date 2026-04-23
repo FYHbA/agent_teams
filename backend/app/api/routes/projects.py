@@ -3,9 +3,30 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from app.config import Settings, get_settings
-from app.models.dto import DiscoveredProject, ProjectRuntimeRequest, ProjectRuntimeResponse, ProjectTreeResponse
-from app.services.projects import discover_projects, list_directory
-from app.services.runtime import get_project_runtime, init_project_runtime
+from app.models.dto import (
+    DiscoveredProject,
+    ProjectCapabilitiesResponse,
+    ProjectPickResponse,
+    ProjectRootsResponse,
+    RecentProjectRecord,
+    WorkspaceOpenRequest,
+    WorkspaceRecord,
+    WorkspaceUpdateRequest,
+    ProjectRuntimeMirrorRequest,
+    ProjectRuntimeMirrorResponse,
+    ProjectRuntimeRequest,
+    ProjectRuntimeResponse,
+    ProjectTreeResponse,
+)
+from app.services.project_picker import pick_project_directory, project_picker_available
+from app.services.projects import discover_projects, list_directory, list_project_roots
+from app.services.runtime import get_project_runtime, init_project_runtime, list_recent_projects
+from app.services.workspace_registry import get_workspace, list_workspaces, update_workspace, upsert_workspace
+from app.services.workflow_project_mirror import (
+    export_project_control_plane,
+    import_project_control_plane,
+    mirror_project_control_plane,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -13,6 +34,56 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 @router.get("/discovered", response_model=list[DiscoveredProject])
 def read_discovered_projects(settings: Settings = Depends(get_settings)) -> list[DiscoveredProject]:
     return discover_projects(settings)
+
+
+@router.get("/roots", response_model=ProjectRootsResponse)
+def read_project_roots() -> ProjectRootsResponse:
+    return list_project_roots()
+
+
+@router.get("/recent", response_model=list[RecentProjectRecord])
+def read_recent_projects(settings: Settings = Depends(get_settings)) -> list[RecentProjectRecord]:
+    return list_recent_projects(settings)
+
+
+@router.get("/workspaces", response_model=list[WorkspaceRecord])
+def read_workspaces(settings: Settings = Depends(get_settings)) -> list[WorkspaceRecord]:
+    return list_workspaces(settings)
+
+
+@router.get("/workspaces/{workspace_id}", response_model=WorkspaceRecord)
+def read_workspace(workspace_id: str, settings: Settings = Depends(get_settings)) -> WorkspaceRecord:
+    return get_workspace(workspace_id, settings)
+
+
+@router.post("/workspaces/open", response_model=WorkspaceRecord)
+def open_workspace(
+    request: WorkspaceOpenRequest,
+    settings: Settings = Depends(get_settings),
+) -> WorkspaceRecord:
+    return upsert_workspace(
+        request.project_path,
+        settings,
+        name=request.name,
+        alias=request.alias,
+        source=request.source,
+        trusted=True,
+        mark_opened=True,
+    )
+
+
+@router.post("/workspaces/{workspace_id}", response_model=WorkspaceRecord)
+def patch_workspace(
+    workspace_id: str,
+    request: WorkspaceUpdateRequest,
+    settings: Settings = Depends(get_settings),
+) -> WorkspaceRecord:
+    return update_workspace(workspace_id, request, settings)
+
+
+@router.get("/capabilities", response_model=ProjectCapabilitiesResponse)
+def read_project_capabilities() -> ProjectCapabilitiesResponse:
+    return ProjectCapabilitiesResponse(native_picker_available=project_picker_available())
 
 
 @router.get("/tree", response_model=ProjectTreeResponse)
@@ -31,9 +102,38 @@ def read_project_runtime(
     return get_project_runtime(path, settings)
 
 
+@router.post("/pick", response_model=ProjectPickResponse)
+def pick_project() -> ProjectPickResponse:
+    return pick_project_directory()
+
+
 @router.post("/runtime/init", response_model=ProjectRuntimeResponse)
 def create_project_runtime(
     request: ProjectRuntimeRequest,
     settings: Settings = Depends(get_settings),
 ) -> ProjectRuntimeResponse:
     return init_project_runtime(request.project_path, settings)
+
+
+@router.post("/runtime/mirror", response_model=ProjectRuntimeMirrorResponse)
+def mirror_project_runtime_control_plane(
+    request: ProjectRuntimeMirrorRequest,
+    settings: Settings = Depends(get_settings),
+) -> ProjectRuntimeMirrorResponse:
+    return mirror_project_control_plane(request.project_path, settings)
+
+
+@router.post("/runtime/export", response_model=ProjectRuntimeMirrorResponse)
+def export_project_runtime_control_plane(
+    request: ProjectRuntimeMirrorRequest,
+    settings: Settings = Depends(get_settings),
+) -> ProjectRuntimeMirrorResponse:
+    return export_project_control_plane(request.project_path, settings, path_str=request.path)
+
+
+@router.post("/runtime/import", response_model=ProjectRuntimeMirrorResponse)
+def import_project_runtime_control_plane(
+    request: ProjectRuntimeMirrorRequest,
+    settings: Settings = Depends(get_settings),
+) -> ProjectRuntimeMirrorResponse:
+    return import_project_control_plane(request.project_path, settings, path_str=request.path)

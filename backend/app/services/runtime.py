@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from app.config import Settings
-from app.models.dto import ProjectRuntimePolicy, ProjectRuntimeResponse
+from app.models.dto import ProjectRuntimePolicy, ProjectRuntimeResponse, RecentProjectRecord
 
 RUNTIME_DIRNAME = ".agents-team"
 RUNTIME_SUBDIRECTORIES = ("runs", "reports", "artifacts", "memory", "logs")
@@ -84,7 +84,24 @@ def _runtime_response(
     settings_file = runtime_settings_path(project_path)
     policy = _load_runtime_policy(settings_file, settings)
 
+    workspace_id = None
+    workspace_name = None
+    workspace_alias = None
+    try:
+        from app.services.workspace_registry import workspace_for_path
+
+        workspace = workspace_for_path(str(project_path), settings)
+        if workspace is not None:
+            workspace_id = workspace.id
+            workspace_name = workspace.name
+            workspace_alias = workspace.alias
+    except Exception:  # noqa: BLE001
+        pass
+
     return ProjectRuntimeResponse(
+        workspace_id=workspace_id,
+        workspace_name=workspace_name,
+        workspace_alias=workspace_alias,
         project_path=str(project_path),
         runtime_path=str(runtime_path),
         state=state,  # type: ignore[arg-type]
@@ -96,34 +113,27 @@ def _runtime_response(
 
 
 def _update_project_registry(project_path: Path, runtime_path: Path, settings: Settings) -> None:
-    registry_path = settings.agents_team_home / "projects.json"
-    settings.agents_team_home.mkdir(parents=True, exist_ok=True)
+    from app.services.workspace_registry import upsert_workspace
 
-    if registry_path.exists():
-        try:
-            payload = json.loads(registry_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            payload = []
-    else:
-        payload = []
+    upsert_workspace(
+        str(project_path),
+        settings,
+        source="filesystem",
+        trusted=True,
+        mark_opened=True,
+    )
 
-    if not isinstance(payload, list):
-        payload = []
 
-    item = {
-        "project_path": str(project_path),
-        "runtime_path": str(runtime_path),
-        "updated_at": _now_iso(),
-    }
-    payload = [row for row in payload if row.get("project_path") != str(project_path)]
-    payload.append(item)
-    payload.sort(key=lambda row: row.get("project_path", "").lower())
-    _write_json(registry_path, payload)
+def list_recent_projects(settings: Settings, *, limit: int = 12) -> list[RecentProjectRecord]:
+    from app.services.workspace_registry import list_recent_projects as list_workspace_recent_projects
+
+    return list_workspace_recent_projects(settings, limit=limit)
 
 
 def get_project_runtime(project_path_str: str, settings: Settings) -> ProjectRuntimeResponse:
     project_path = resolve_project_path(project_path_str)
     runtime_path = project_runtime_path(project_path)
+    _update_project_registry(project_path, runtime_path, settings)
     state = "existing" if runtime_path.exists() else "missing"
     return _runtime_response(project_path, settings, state)
 

@@ -22,4 +22,5 @@ def test_settings(tmp_path: Path) -> Settings:
         default_allow_network=True,
         default_allow_installs=True,
         default_confirm_dangerous_commands=True,
+        workflow_worker_count=3,
     )

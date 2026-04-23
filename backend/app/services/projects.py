@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 from fastapi import HTTPException
 
 from app.config import Settings
-from app.models.dto import DiscoveredProject, ProjectTreeEntry, ProjectTreeResponse
+from app.models.dto import DiscoveredProject, ProjectRootEntry, ProjectRootsResponse, ProjectTreeEntry, ProjectTreeResponse
 from app.services.codex import discover_codex_projects
 
 
@@ -16,6 +17,21 @@ def discover_projects(settings: Settings) -> list[DiscoveredProject]:
     ]
     discovered.sort(key=lambda item: item.path.lower())
     return discovered
+
+
+def list_project_roots() -> ProjectRootsResponse:
+    roots: list[ProjectRootEntry] = []
+    if os.name == "nt":
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            candidate = Path(f"{letter}:\\")
+            if candidate.exists():
+                roots.append(ProjectRootEntry(name=f"{letter} drive", path=str(candidate)))
+    else:
+        roots.append(ProjectRootEntry(name="Root", path="/"))
+        home = Path.home()
+        if home.exists():
+            roots.append(ProjectRootEntry(name="Home", path=str(home)))
+    return ProjectRootsResponse(roots=roots)
 
 
 def _build_tree(path: Path, depth: int) -> list[ProjectTreeEntry]:

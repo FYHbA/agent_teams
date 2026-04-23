@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import codex, health, projects, workflows
 from app.config import get_settings
+from app.services.workflow_run_execution import start_workflow_queue_worker
 
 
 def create_app() -> FastAPI:
@@ -28,6 +29,11 @@ def create_app() -> FastAPI:
     app.include_router(codex.router, prefix=settings.api_prefix)
     app.include_router(projects.router, prefix=settings.api_prefix)
     app.include_router(workflows.router, prefix=settings.api_prefix)
+
+    @app.on_event("startup")
+    def start_background_workers() -> None:
+        start_workflow_queue_worker(settings)
+
     return app
 
 

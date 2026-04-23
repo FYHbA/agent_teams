@@ -13,6 +13,16 @@ def _bool_env(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str
@@ -23,6 +33,7 @@ class Settings:
     default_allow_network: bool
     default_allow_installs: bool
     default_confirm_dangerous_commands: bool
+    workflow_worker_count: int
 
 
 @lru_cache(maxsize=1)
@@ -41,4 +52,5 @@ def get_settings() -> Settings:
         default_allow_network=_bool_env("AGENTS_TEAM_ALLOW_NETWORK", True),
         default_allow_installs=_bool_env("AGENTS_TEAM_ALLOW_INSTALLS", True),
         default_confirm_dangerous_commands=_bool_env("AGENTS_TEAM_CONFIRM_DANGEROUS", True),
+        workflow_worker_count=max(1, _int_env("AGENTS_TEAM_WORKER_COUNT", 3)),
     )

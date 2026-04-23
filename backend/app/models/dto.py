@@ -82,6 +82,15 @@ class ProjectTreeResponse(BaseModel):
     entries: list[ProjectTreeEntry]
 
 
+class ProjectRootEntry(BaseModel):
+    name: str
+    path: str
+
+
+class ProjectRootsResponse(BaseModel):
+    roots: list[ProjectRootEntry]
+
+
 class ProjectRuntimePolicy(BaseModel):
     allow_network: bool
     allow_installs: bool
@@ -95,7 +104,27 @@ class ProjectRuntimeRequest(BaseModel):
     project_path: str
 
 
+class WorkspaceOpenRequest(BaseModel):
+    project_path: str
+    name: str | None = None
+    alias: str | None = None
+    source: Literal["codex-config", "filesystem", "manual", "picker"] = "manual"
+
+
+class WorkspaceUpdateRequest(BaseModel):
+    name: str | None = None
+    alias: str | None = None
+
+
+class ProjectRuntimeMirrorRequest(BaseModel):
+    project_path: str
+    path: str | None = None
+
+
 class ProjectRuntimeResponse(BaseModel):
+    workspace_id: str | None = None
+    workspace_name: str | None = None
+    workspace_alias: str | None = None
     project_path: str
     runtime_path: str
     state: Literal["missing", "initialized", "existing"]
@@ -103,6 +132,45 @@ class ProjectRuntimeResponse(BaseModel):
     directories: list[str]
     policy: ProjectRuntimePolicy
     global_home: str
+
+
+class ProjectRuntimeMirrorResponse(BaseModel):
+    operation: Literal["mirror", "export", "import"]
+    project_path: str
+    path: str
+    run_count: int
+    queue_item_count: int
+    agent_session_count: int
+    generated_at: str
+
+
+class ProjectPickResponse(BaseModel):
+    path: str | None = None
+
+
+class ProjectCapabilitiesResponse(BaseModel):
+    native_picker_available: bool
+
+
+class WorkspaceRecord(BaseModel):
+    id: str
+    name: str
+    alias: str
+    project_path: str
+    runtime_path: str
+    source: Literal["codex-config", "filesystem", "manual", "picker"]
+    trusted: bool = True
+    updated_at: str
+    last_opened_at: str | None = None
+
+
+class RecentProjectRecord(BaseModel):
+    workspace_id: str
+    name: str
+    alias: str
+    path: str
+    runtime_path: str
+    updated_at: str
 
 
 class AgentCard(BaseModel):
@@ -115,8 +183,18 @@ class WorkflowStep(BaseModel):
     id: str
     title: str
     agent_role: str
+    backend: Literal[
+        "planner_backend",
+        "research_backend",
+        "codex_backend",
+        "verify_backend",
+        "reviewer_backend",
+        "reporter_backend",
+    ]
     execution: Literal["serial", "parallel"]
     goal: str
+    depends_on: list[str] = Field(default_factory=list)
+    allow_failed_dependencies: bool = False
     requires_confirmation: bool = False
 
 
@@ -136,6 +214,7 @@ class WorkflowPlanResponse(BaseModel):
     command_policy: str
     agents: list[AgentCard]
     steps: list[WorkflowStep]
+    memory_guidance: "WorkflowRoleMemoryGuidance" = Field(default_factory=lambda: WorkflowRoleMemoryGuidance())
     outputs: list[str]
     warnings: list[str]
 
@@ -147,22 +226,84 @@ class WorkflowRunCreateRequest(BaseModel):
     allow_installs: bool | None = None
     codex_session_id: str | None = None
     resume_prompt: str | None = None
+    start_immediately: bool = False
+
+
+class MemoryEntry(BaseModel):
+    id: str
+    scope: Literal["project", "global"]
+    entry_kind: Literal["handoff", "research_finding", "verification_finding", "global_rule"] = "handoff"
+    source_step_id: Literal["research", "verify"] | None = None
+    step_status: Literal["completed", "failed"] | None = None
+    created_at: str
+    source_run_id: str | None = None
+    attempt_count: int | None = None
+    title: str
+    summary: str
+    details: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class WorkflowMemoryContext(BaseModel):
+    project_memory_path: str
+    global_memory_path: str | None = None
+    recalled_project: list[MemoryEntry] = Field(default_factory=list)
+    recalled_global: list[MemoryEntry] = Field(default_factory=list)
+    written_project: list[MemoryEntry] = Field(default_factory=list)
+    written_global: list[MemoryEntry] = Field(default_factory=list)
+
+
+class WorkflowRoleMemoryGuidance(BaseModel):
+    planner: list[str] = Field(default_factory=list)
+    reviewer: list[str] = Field(default_factory=list)
+    reporter: list[str] = Field(default_factory=list)
+
+
+class WorkflowStepRun(BaseModel):
+    step_id: str
+    title: str
+    agent_role: str
+    backend: Literal[
+        "planner_backend",
+        "research_backend",
+        "codex_backend",
+        "verify_backend",
+        "reviewer_backend",
+        "reporter_backend",
+    ]
+    execution: Literal["serial", "parallel"]
+    goal: str
+    depends_on: list[str] = Field(default_factory=list)
+    allow_failed_dependencies: bool = False
+    status: Literal["pending", "running", "completed", "failed", "skipped", "cancelled"]
+    started_at: str | None = None
+    completed_at: str | None = None
+    summary: str | None = None
 
 
 class WorkflowRunRecord(BaseModel):
     id: str
     status: Literal["planned", "running", "completed", "failed", "cancelled"]
+    attempt_count: int = 0
     created_at: str
     updated_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    cancel_requested_at: str | None = None
+    cancelled_at: str | None = None
     task: str
     project_path: str
     runtime_path: str
     run_path: str
     report_path: str
     changes_path: str
-    memory_scope: Literal["project+global"]
+    log_path: str
+    last_message_path: str | None = None
+    memory_scope: Literal["project", "project+global"]
     git_strategy: Literal["manual"]
     direct_file_editing: bool
+    requires_dangerous_command_confirmation: bool = False
+    dangerous_commands_confirmed_at: str | None = None
     team_name: str
     summary: str
     allow_network: bool
@@ -172,8 +313,98 @@ class WorkflowRunRecord(BaseModel):
     steps: list[WorkflowStep]
     outputs: list[str]
     warnings: list[str]
+    error: str | None = None
+    step_runs: list[WorkflowStepRun] = Field(default_factory=list)
+    memory_context: WorkflowMemoryContext
+    memory_guidance: WorkflowRoleMemoryGuidance
     codex_session_id: str | None = None
     codex_commands: list[CodexCommandSpec] = Field(default_factory=list)
+
+
+class WorkflowRunLogResponse(BaseModel):
+    run_id: str
+    log_path: str
+    content: str
+
+
+class WorkflowArtifactDocument(BaseModel):
+    key: Literal["planning_brief", "report", "changes", "last_message", "project_snapshot", "verification_brief", "memory_context"]
+    title: str
+    path: str | None
+    content_type: Literal["markdown", "text"]
+    available: bool
+    content: str
+
+
+class WorkflowRunArtifactsResponse(BaseModel):
+    run_id: str
+    documents: list[WorkflowArtifactDocument]
+
+
+class WorkflowQueueItemRecord(BaseModel):
+    id: str
+    run_id: str
+    project_path: str | None = None
+    mode: Literal["start", "resume", "retry"]
+    item_kind: Literal["run", "step"] = "run"
+    target_step_id: str | None = None
+    branch_group_id: str | None = None
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
+    prepared: bool
+    enqueued_at: str
+    updated_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    error: str | None = None
+    worker_id: str | None = None
+    heartbeat_at: str | None = None
+    lease_expires_at: str | None = None
+
+
+class WorkflowWorkerRecord(BaseModel):
+    worker_id: str
+    thread_name: str
+    process_id: int
+    host: str
+    status: Literal["idle", "running"]
+    started_at: str
+    last_heartbeat_at: str
+    current_item_id: str | None = None
+    current_run_id: str | None = None
+
+
+class WorkflowQueueDashboardResponse(BaseModel):
+    items: list[WorkflowQueueItemRecord]
+    workers: list[WorkflowWorkerRecord]
+    queued_count: int
+    running_count: int
+    terminal_count: int
+    stale_count: int
+
+
+class WorkflowAgentSessionRecord(BaseModel):
+    id: str
+    run_id: str
+    step_id: str
+    title: str
+    agent_role: str
+    backend: Literal[
+        "planner_backend",
+        "research_backend",
+        "codex_backend",
+        "verify_backend",
+        "reviewer_backend",
+        "reporter_backend",
+    ]
+    execution: Literal["serial", "parallel"]
+    status: Literal["running", "completed", "failed", "cancelled"]
+    owner_worker_id: str | None = None
+    provider: str | None = None
+    session_ref: str | None = None
+    started_at: str
+    completed_at: str | None = None
+    summary: str | None = None
+    error: str | None = None
 
 
 ProjectTreeEntry.model_rebuild()
