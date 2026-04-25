@@ -3,7 +3,7 @@
 ## Goal
 
 Agents Team is a local-first orchestration layer for multiple code-oriented agents.
-It should coordinate planning, coding, testing, reviewing, and reporting across multiple projects while integrating with local Codex capabilities.
+It should coordinate planning, coding, testing, reviewing, and reporting while keeping one active local project in focus at a time and integrating with local Codex capabilities.
 
 ## V1 system shape
 
@@ -110,6 +110,8 @@ CLI and service entry points are a safer integration boundary.
 ## Safety model
 
 - dangerous commands require confirmation
+- when command-backed checks can be detected ahead of time, the UI should surface a command preview before approval
+- command approval should be able to progress at the per-command level, with the run unblocked only after all required commands are confirmed
 - less risky execution policies should remain configurable
 - network access and package installation must be user-editable settings
 - Git commit and push stay human-controlled in V1
@@ -120,8 +122,10 @@ CLI and service entry points are a safer integration boundary.
 - queue claims should be atomic across backend processes
 - run metadata and queue metadata should share a consistent persistent store
 - worker ownership should be explicit and renewed through heartbeats / leases while work is active
+- stale worker leases should be recoverable, with expired queue items requeued and stale workers surfaced in diagnostics
 - each workflow step should be observable as its own agent session, not only as a field on the final run record
 - dependency-aware schedulers should be able to emit parallel branch jobs that different workers can claim independently
+- parallel branch waves should emit enough branch-level state and artifacts to explain partial failures after review/report
 - branch failure policy should be explicit: some downstream steps such as review may continue on failed verification branches while the overall run still resolves to failed
 - backend startup should recover interrupted queue items and orphaned running runs
 - synchronous execution paths may still exist for tests, but product traffic should flow through the queue worker
@@ -139,9 +143,9 @@ The first milestone should deliver:
 
 ## Frontend UX direction
 
-- the primary user path should be single-project -> build team -> run cockpit
-- diagnostics should exist, but as a secondary stage rather than the dominant first view
+- the primary user path should be launcher -> single-project workbench -> run cockpit
+- diagnostics should exist, but as a secondary surface inside the workbench rather than the dominant first view
 - UI text should support both Chinese and English
 - local project opening should support backend-persisted recent projects, manual paths, discovered projects, and backend-host filesystem browsing with a native folder picker bridge when available
-- URL state should preserve the current stage and selected project/run so browser refresh and shared links degrade gracefully
+- URL state should preserve the current view and selected project/run so browser refresh and shared links degrade gracefully
 - the visual language should feel like a focused dark-tech product, not a warm admin dashboard

@@ -15,3 +15,7 @@ def project_snapshot_path(record: WorkflowRunRecord) -> Path:
 
 def verification_brief_path(record: WorkflowRunRecord) -> Path:
     return Path(record.run_path) / "verification-brief.md"
+
+
+def parallel_branches_path(record: WorkflowRunRecord) -> Path:
+    return Path(record.run_path) / "parallel-branches.md"

@@ -136,6 +136,16 @@ export type AgentCard = {
   reason: string;
 };
 
+export type WorkflowCommandPreview = {
+  command_id: string;
+  label: string;
+  argv: string[];
+  cwd: string | null;
+  source: "verification" | "codex_bridge";
+  requires_confirmation: boolean;
+  confirmed_at: string | null;
+};
+
 export type WorkflowStep = {
   id: string;
   title: string;
@@ -152,6 +162,7 @@ export type WorkflowStep = {
   depends_on: string[];
   allow_failed_dependencies: boolean;
   requires_confirmation: boolean;
+  command_previews: WorkflowCommandPreview[];
 };
 
 export type MemoryEntry = {
@@ -200,6 +211,7 @@ export type WorkflowStepRun = {
   depends_on: string[];
   allow_failed_dependencies: boolean;
   status: "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled";
+  command_previews: WorkflowCommandPreview[];
   started_at: string | null;
   completed_at: string | null;
   summary: string | null;
@@ -272,7 +284,15 @@ export type WorkflowRunEvent = {
 };
 
 export type WorkflowArtifactDocument = {
-  key: "planning_brief" | "report" | "changes" | "last_message" | "project_snapshot" | "verification_brief" | "memory_context";
+  key:
+    | "planning_brief"
+    | "report"
+    | "changes"
+    | "last_message"
+    | "project_snapshot"
+    | "verification_brief"
+    | "parallel_branches"
+    | "memory_context";
   title: string;
   path: string | null;
   content_type: "markdown" | "text";
@@ -310,11 +330,12 @@ export type WorkflowWorker = {
   thread_name: string;
   process_id: number;
   host: string;
-  status: "idle" | "running";
+  status: "idle" | "running" | "stale";
   started_at: string;
   last_heartbeat_at: string;
   current_item_id: string | null;
   current_run_id: string | null;
+  stale_reason: string | null;
 };
 
 export type WorkflowQueueDashboard = {
@@ -324,6 +345,7 @@ export type WorkflowQueueDashboard = {
   running_count: number;
   terminal_count: number;
   stale_count: number;
+  stale_worker_count: number;
 };
 
 export type WorkflowAgentSession = {

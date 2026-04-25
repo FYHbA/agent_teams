@@ -1,4 +1,4 @@
-import type { CodexSessionBridge, ProjectRuntimeMirrorResult, WorkflowQueueDashboard, WorkflowQueueItem } from "../types";
+import type { WorkflowQueueDashboard, WorkflowQueueItem } from "../types";
 import type { Translator } from "../i18n";
 
 type DiagnosticsStageProps = {
@@ -6,12 +6,8 @@ type DiagnosticsStageProps = {
   queueDashboard: WorkflowQueueDashboard | null;
   queueLoading: boolean;
   queueError: string;
-  bridge: CodexSessionBridge | null;
-  bridgeError: string;
-  mirrorResult: ProjectRuntimeMirrorResult | null;
   queueItemNote: (item: WorkflowQueueItem) => string;
-  onCancelQueueItem: (itemId: string) => void;
-  onRequeueQueueItem: (itemId: string) => void;
+  embedded?: boolean;
 };
 
 export function DiagnosticsStage({
@@ -19,23 +15,23 @@ export function DiagnosticsStage({
   queueDashboard,
   queueLoading,
   queueError,
-  bridge,
-  bridgeError,
-  mirrorResult,
   queueItemNote,
-  onCancelQueueItem,
-  onRequeueQueueItem,
+  embedded = false,
 }: DiagnosticsStageProps) {
   const queueItems = queueDashboard?.items ?? [];
   const queueWorkers = queueDashboard?.workers ?? [];
+  const runningWorkers = queueWorkers.filter((worker) => worker.status === "running");
+  const idleWorkers = queueWorkers.filter((worker) => worker.status === "idle");
+  const staleWorkers = queueWorkers.filter((worker) => worker.status === "stale");
+  const healthyWorkers = queueWorkers.filter((worker) => worker.status !== "stale");
 
-  return (
-    <section className="stage-panel">
+  const content = (
+    <>
       <div className="stage-intro">
         <div>
           <p className="eyebrow">{t("nav.diagnostics")}</p>
           <h2>{t("diagnostics.heading")}</h2>
-          <p>{t("diagnostics.description")}</p>
+          {!embedded ? <p>{t("diagnostics.description")}</p> : null}
         </div>
       </div>
 
@@ -45,48 +41,97 @@ export function DiagnosticsStage({
             <h3>{t("diagnostics.workers")}</h3>
             <span>{queueLoading ? t("common.loading") : queueWorkers.length}</span>
           </div>
-          <div className="session-list compact-list">
-            {queueWorkers.length === 0 ? (
-              <div className="empty-state">{t("diagnostics.workersEmpty")}</div>
-            ) : (
-              queueWorkers.map((worker) => (
-                <article key={worker.worker_id} className="session-item">
-                  <strong>{worker.worker_id}</strong>
-                  <span>{worker.status}</span>
-                  <code>{worker.current_run_id ?? worker.thread_name}</code>
-                </article>
-              ))
-            )}
-          </div>
+          <p className="workflow-copy">
+            {t("diagnostics.workerSummary", {
+              total: queueWorkers.length,
+              running: runningWorkers.length,
+              idle: idleWorkers.length,
+              stale: staleWorkers.length,
+            })}
+          </p>
+          {queueWorkers.length === 0 ? (
+            <div className="empty-state">{t("diagnostics.workersEmpty")}</div>
+          ) : staleWorkers.length === 0 ? (
+            <article className="status-summary-card">
+              <span className="meta-label">{t("diagnostics.workerHealthyCardLabel")}</span>
+              <strong>{healthyWorkers.length}</strong>
+              <p>{t("diagnostics.workerHealthyCardBody", { count: healthyWorkers.length })}</p>
+            </article>
+          ) : (
+            <div className="step-list compact-list">
+              {staleWorkers.map((worker) => {
+                const tone = worker.status === "running" ? "running" : worker.status === "stale" ? "failed" : "skipped";
+                const statusText =
+                  worker.status === "running"
+                    ? t("diagnostics.workerRunning")
+                    : worker.status === "stale"
+                    ? t("diagnostics.workerStale")
+                    : t("diagnostics.workerIdle");
+                return (
+                  <article key={worker.worker_id} className="step-item">
+                    <div className="step-header">
+                      <strong>{worker.worker_id}</strong>
+                      <span className={`step-mode ${tone}`}>{statusText}</span>
+                    </div>
+                    <div className="meta-grid compact">
+                      <div>
+                        <span className="meta-label">{t("diagnostics.workerCurrentRun")}</span>
+                        <strong>{worker.current_run_id ?? t("common.none")}</strong>
+                      </div>
+                      <div>
+                        <span className="meta-label">{t("diagnostics.workerLastHeartbeat")}</span>
+                        <strong>{worker.last_heartbeat_at}</strong>
+                      </div>
+                      <div>
+                        <span className="meta-label">{t("diagnostics.workerStaleReason")}</span>
+                        <strong>{worker.stale_reason ?? t("diagnostics.workerHealthy")}</strong>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </article>
 
         <article className="glass-panel">
           <div className="panel-header">
             <h3>{t("diagnostics.queue")}</h3>
-            <span>{queueDashboard?.queued_count ?? 0} / {queueDashboard?.running_count ?? 0}</span>
+            <span>{queueLoading ? t("common.loading") : queueItems.length}</span>
           </div>
-          <div className="command-list compact-list">
+          <p className="workflow-copy">
+            {t("diagnostics.queueSummary", {
+              queued: queueDashboard?.queued_count ?? 0,
+              running: queueDashboard?.running_count ?? 0,
+              terminal: queueDashboard?.terminal_count ?? 0,
+            })}
+          </p>
+          <div className="step-list compact-list">
             {queueItems.length === 0 ? (
               <div className="empty-state">{t("diagnostics.queueEmpty")}</div>
             ) : (
-              queueItems.slice(0, 12).map((item) => (
-                <article key={item.id} className="command-item queue-item">
-                  <strong>{item.run_id}</strong>
-                  <span className="meta-label">
-                    {item.item_kind} / {item.mode} / {item.status}
-                  </span>
+              queueItems.slice(0, 8).map((item) => (
+                <article key={item.id} className="step-item">
+                  <div className="step-header">
+                    <strong>{item.run_id}</strong>
+                    <span className={`step-mode ${item.status === "running" ? "running" : item.status === "queued" ? "planned" : item.status}`}>
+                      {t(`status.${item.status}`)}
+                    </span>
+                  </div>
                   <p>{queueItemNote(item)}</p>
-                  <div className="button-row">
-                    {item.status === "queued" ? (
-                      <button type="button" className="secondary-button" onClick={() => onCancelQueueItem(item.id)} disabled={queueLoading}>
-                        {t("diagnostics.queueItemCancel")}
-                      </button>
-                    ) : null}
-                    {item.status === "failed" || item.status === "cancelled" ? (
-                      <button type="button" className="secondary-button" onClick={() => onRequeueQueueItem(item.id)} disabled={queueLoading}>
-                        {t("diagnostics.queueItemRequeue")}
-                      </button>
-                    ) : null}
+                  <div className="meta-grid compact">
+                    <div>
+                      <span className="meta-label">{t("diagnostics.queueMode")}</span>
+                      <strong>{item.mode}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">{t("diagnostics.queueWorker")}</span>
+                      <strong>{item.worker_id ?? t("common.none")}</strong>
+                    </div>
+                    <div>
+                      <span className="meta-label">{t("diagnostics.queueUpdatedAt")}</span>
+                      <strong>{item.updated_at}</strong>
+                    </div>
                   </div>
                 </article>
               ))
@@ -94,48 +139,13 @@ export function DiagnosticsStage({
           </div>
           {queueError ? <div className="inline-error">{queueError}</div> : null}
         </article>
-
-        <article className="glass-panel">
-          <div className="panel-header">
-            <h3>{t("diagnostics.bridge")}</h3>
-            <span>{bridge?.commands?.length ?? 0}</span>
-          </div>
-          <div className="command-list compact-list">
-            {bridge?.commands?.length ? (
-              bridge.commands.map((command) => (
-                <article key={`${command.mode}-${command.argv.join(" ")}`} className="command-item">
-                  <strong>{command.purpose}</strong>
-                  <span className="meta-label">{command.mode}</span>
-                  <code>{command.argv.join(" ")}</code>
-                </article>
-              ))
-            ) : (
-              <div className="empty-state">{t("diagnostics.bridgeEmpty")}</div>
-            )}
-          </div>
-          {bridgeError ? <div className="inline-error">{bridgeError}</div> : null}
-        </article>
-
-        <article className="glass-panel">
-          <div className="panel-header">
-            <h3>{t("diagnostics.mirror")}</h3>
-            <span>{mirrorResult?.operation ?? t("common.waiting")}</span>
-          </div>
-          {mirrorResult ? (
-            <div className="run-note">
-              {t("project.mirrorResult", {
-                operation: t(`mirror.operation.${mirrorResult.operation}`),
-                runs: mirrorResult.run_count,
-                queue: mirrorResult.queue_item_count,
-                sessions: mirrorResult.agent_session_count,
-                path: mirrorResult.path,
-              })}
-            </div>
-          ) : (
-            <div className="empty-state">{t("diagnostics.mirrorEmpty")}</div>
-          )}
-        </article>
       </div>
-    </section>
+    </>
   );
+
+  if (embedded) {
+    return <div className="embedded-stage embedded-diagnostics-stage">{content}</div>;
+  }
+
+  return <section className="stage-panel">{content}</section>;
 }

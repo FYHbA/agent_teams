@@ -34,8 +34,9 @@ def upsert_workflow_worker(
                 started_at,
                 last_heartbeat_at,
                 current_item_id,
-                current_run_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                current_run_id,
+                stale_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(worker_id) DO UPDATE SET
                 thread_name = excluded.thread_name,
                 process_id = excluded.process_id,
@@ -44,7 +45,8 @@ def upsert_workflow_worker(
                 started_at = COALESCE(workflow_workers.started_at, excluded.started_at),
                 last_heartbeat_at = excluded.last_heartbeat_at,
                 current_item_id = excluded.current_item_id,
-                current_run_id = excluded.current_run_id
+                current_run_id = excluded.current_run_id,
+                stale_reason = NULL
             """,
             (
                 worker_id,
@@ -56,6 +58,7 @@ def upsert_workflow_worker(
                 heartbeat,
                 current_item_id,
                 current_run_id,
+                None,
             ),
         )
     finally:
@@ -77,7 +80,8 @@ def list_workflow_workers(settings: Settings) -> list[WorkflowWorkerRecord]:
                 started_at,
                 last_heartbeat_at,
                 current_item_id,
-                current_run_id
+                current_run_id,
+                stale_reason
             FROM workflow_workers
             ORDER BY last_heartbeat_at DESC, worker_id ASC
             """

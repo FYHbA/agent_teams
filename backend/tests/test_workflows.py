@@ -92,3 +92,34 @@ def test_workflow_plan_builds_parallel_verify_wave_for_matrix_tasks() -> None:
     assert all(step.execution == "parallel" for step in verify_steps)
     review_step = next(step for step in response.steps if step.id == "review")
     assert set(review_step.depends_on) == {"verify_tests", "verify_build"}
+
+
+def test_workflow_plan_attaches_command_previews_for_verification_steps(tmp_path: Path, test_settings) -> None:
+    project_path = tmp_path / "repo"
+    project_path.mkdir()
+    (project_path / "tests").mkdir()
+    (project_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "vite build",
+                    "test": "vitest run",
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    response = build_workflow_plan(
+        WorkflowPlanRequest(
+            task="Run regression tests and benchmark the build output.",
+            project_path=str(project_path),
+        ),
+        test_settings,
+    )
+
+    verify_tests = next(step for step in response.steps if step.id == "verify_tests")
+    verify_build = next(step for step in response.steps if step.id == "verify_build")
+    assert [preview.label for preview in verify_tests.command_previews] == ["python -m pytest", "npm run test"]
+    assert [preview.label for preview in verify_build.command_previews] == ["npm run build"]

@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from app.models.dto import WorkflowCommandPreview
 from app.models.dto import WorkflowRunRecord
 from app.services.workflow_backend_exceptions import WorkflowCancellationRequested, WorkflowExecutionError
 from app.services.workflow_run_store import append_log
@@ -113,3 +114,23 @@ def verification_commands(project_path: Path, *, focus: str = "all") -> list[tup
         commands.append(("npm run test", ["npm", "run", "test"]))
 
     return commands
+
+
+def verification_command_previews(
+    project_path: Path,
+    *,
+    focus: str = "all",
+    step_id: str,
+    requires_confirmation: bool = False,
+) -> list[WorkflowCommandPreview]:
+    return [
+        WorkflowCommandPreview(
+            command_id=f"{step_id}:{index}",
+            label=label,
+            argv=argv,
+            cwd=str(project_path),
+            source="verification",
+            requires_confirmation=requires_confirmation,
+        )
+        for index, (label, argv) in enumerate(verification_commands(project_path, focus=focus), start=1)
+    ]

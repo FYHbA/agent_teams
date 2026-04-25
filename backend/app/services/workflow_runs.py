@@ -6,7 +6,9 @@ from app.config import Settings
 from app.models.dto import (
     CodexCommandSpec,
     CodexSessionBridgeRequest,
+    WorkflowCommandPreview,
     WorkflowPlanRequest,
+    WorkflowStep,
     WorkflowRunArtifactsResponse,
     WorkflowRunCreateRequest,
     WorkflowRunLogResponse,
@@ -44,6 +46,39 @@ from app.services.workflow_run_store import (
 from app.services.workflows import build_workflow_plan
 
 
+def _bridge_command_previews(
+    commands: list[CodexCommandSpec],
+    *,
+    step_id: str,
+    requires_confirmation: bool,
+) -> list[WorkflowCommandPreview]:
+    return [
+        WorkflowCommandPreview(
+            command_id=f"{step_id}:{index}",
+            label=command.purpose,
+            argv=list(command.argv),
+            cwd=command.cwd,
+            source="codex_bridge",
+            requires_confirmation=requires_confirmation,
+        )
+        for index, command in enumerate(commands, start=1)
+    ]
+
+
+def _attach_implement_previews(record_steps: list[WorkflowStep], commands: list[CodexCommandSpec]) -> None:
+    if not commands:
+        return
+    for step in record_steps:
+        if step.id == "implement":
+            previews = _bridge_command_previews(
+                commands,
+                step_id=step.id,
+                requires_confirmation=step.requires_confirmation,
+            )
+            step.command_previews = previews
+            return
+
+
 def create_workflow_run(request: WorkflowRunCreateRequest, settings: Settings) -> WorkflowRunRecord:
     project_path = resolve_project_path(request.project_path)
     runtime = init_project_runtime(str(project_path), settings)
@@ -59,6 +94,7 @@ def create_workflow_run(request: WorkflowRunCreateRequest, settings: Settings) -
             project_path=str(project_path),
             allow_network=request.allow_network,
             allow_installs=request.allow_installs,
+            locale=request.locale,
         ),
         settings,
         memory_context=memory_context,
@@ -80,9 +116,15 @@ def create_workflow_run(request: WorkflowRunCreateRequest, settings: Settings) -
         codex_commands = bridge.commands
         warnings.extend(bridge.warnings)
 
+    _attach_implement_previews(plan.steps, codex_commands)
+
     requires_dangerous_command_confirmation = any(step.requires_confirmation for step in plan.steps)
     if requires_dangerous_command_confirmation:
-        warnings.append("This run must be explicitly approved before it can execute dangerous command-backed steps.")
+        warnings.append(
+            "这个运行在真正执行危险命令前必须先得到明确批准。"
+            if request.locale == "zh-CN"
+            else "This run must be explicitly approved before it can execute dangerous command-backed steps."
+        )
 
     run_id = make_run_id()
     run_root = project_runtime_path(project_path) / "runs" / run_id
@@ -141,7 +183,14 @@ def create_workflow_run(request: WorkflowRunCreateRequest, settings: Settings) -
 
     if request.start_immediately:
         if record.requires_dangerous_command_confirmation:
-            record.warnings = [*record.warnings, "Run created in planned mode because dangerous command execution still needs explicit approval."]
+            record.warnings = [
+                *record.warnings,
+                (
+                    "这个运行先停留在“已计划”状态，因为危险命令执行仍然需要明确批准。"
+                    if request.locale == "zh-CN"
+                    else "Run created in planned mode because dangerous command execution still needs explicit approval."
+                ),
+            ]
             record.updated_at = now_iso()
             save_record(record, settings)
             return record

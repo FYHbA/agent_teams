@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 
 from app.config import Settings, get_settings
 from app.models.dto import (
+    DangerousCommandApprovalRequest,
     WorkflowAgentSessionRecord,
     WorkflowQueueDashboardResponse,
     WorkflowQueueItemRecord,
@@ -129,10 +130,16 @@ def cancel_run(
 @router.post("/runs/{run_id}/approve-dangerous", response_model=WorkflowRunRecord)
 def approve_dangerous_commands(
     run_id: str,
+    request: DangerousCommandApprovalRequest | None = None,
     project_path: str | None = Query(default=None, description="Optional project path for a targeted lookup."),
     settings: Settings = Depends(get_settings),
 ) -> WorkflowRunRecord:
-    return approve_workflow_run_dangerous_commands(run_id, project_path, settings)
+    return approve_workflow_run_dangerous_commands(
+        run_id,
+        project_path,
+        settings,
+        command_ids=request.command_ids if request else None,
+    )
 
 
 @router.post("/runs/{run_id}/resume", response_model=WorkflowRunRecord)

@@ -193,6 +193,7 @@ def initialize_step_runs(record: WorkflowRunRecord) -> list[WorkflowStepRun]:
             depends_on=list(step.depends_on),
             allow_failed_dependencies=step.allow_failed_dependencies,
             status="pending",
+            command_previews=[preview.model_copy(deep=True) for preview in step.command_previews],
         )
         for step in record.steps
     ]

@@ -5,6 +5,7 @@ Thumbs.db
 *.log
 *.tmp
 *.swp
+*.local.md
 .env
 .env.*
 .idea/

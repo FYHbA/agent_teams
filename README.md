@@ -5,7 +5,7 @@ It is designed to solve a gap in current Codex usage: multiple conversations can
 
 This repository contains the first product skeleton:
 
-- A browser-based frontend for project switching, task drafting, and team-room style collaboration
+- A browser-based frontend for opening one project folder at a time, drafting tasks, and staying inside a persistent workbench
 - A FastAPI backend for orchestration, local filesystem access, and Codex integration scaffolding
 - A foundation for project-local runtime state via `.agents-team/`
 
@@ -14,7 +14,7 @@ This repository contains the first product skeleton:
 V1 is focused on code-task collaboration.
 
 - Local-first
-- Multi-project switching
+- Single-project workbench focus
 - Strict workflow collaboration
 - Auto-generated agent teams
 - Direct file editing by agents
@@ -79,6 +79,11 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-down.ps1
 - `GET /api/codex/sessions`
 - `POST /api/codex/sessions/{session_id}/bridge`
 - `GET /api/projects/discovered`
+- `GET /api/projects/roots`
+- `GET /api/projects/recent`
+- `GET /api/projects/workspaces`
+- `POST /api/projects/workspaces/open`
+- `POST /api/projects/workspaces/{workspace_id}`
 - `POST /api/projects/pick`
 - `GET /api/projects/tree?path=<project-dir>`
 - `GET /api/projects/runtime?path=<project-dir>`
@@ -132,8 +137,16 @@ Workflow planning now includes explicit dependency edges between steps, and matr
 Parallel verification branches can now be emitted as separately claimed queue items so different workers inside the backend process can consume them concurrently instead of relying on one coordinator thread to execute the whole wave.
 When a verification branch fails, the workflow can still carry partial success into review and report, with the final run marked failed after handoff artifacts are produced.
 Project-local control-plane mirrors and export/import snapshots now let the global SQLite control state be copied into `.agents-team/` and restored later.
-The frontend now supports bilingual UI text, a staged project -> build -> run -> diagnostics workflow, and a single-project path-first interaction model.
-Project opening and switching are now more browser-friendly: the UI can read recent projects from the backend registry, preserve stage/project/run state in the URL, call a native folder picker on the backend host when available, and fall back to browsing the backend host filesystem when the environment does not support a native picker.
+The frontend now supports bilingual UI text, a launcher + persistent single-project workbench flow, and a single-project path-first interaction model.
+Project opening and switching are now more browser-friendly: the UI can read recent projects from the backend registry, preserve view/project/run state in the URL, call a native folder picker on the backend host when available, and fall back to browsing the backend host filesystem with breadcrumbs and local folder filtering when the environment does not support a native picker.
+Once a project is open, task drafting, runtime tools, run orchestration, artifacts, quick project switching, and secondary diagnostics stay in one continuous workbench instead of separate top-level pages.
+The workbench now separates its two primary jobs into dedicated full-width sections: one area for building the team and shaping the next run, and one area for the run cockpit itself. This makes it easier to focus on composition first and execution second.
+The run cockpit also now includes a chat-style agent session view, so step-scoped agent updates can be read more like a conversation timeline instead of a raw metadata list.
+The default planning path now stays focused on the task draft and execution policy, while lower-value Codex session resume controls are kept out of the main build surface so the UI is easier to understand for general users.
+Workflow drafts and run details now surface structured command previews for verification and Codex bridge paths, so dangerous-command approval is based on visible expected actions rather than a generic warning.
+Dangerous command approval can now be handled per command preview, with partial approvals preserved until the remaining gated commands are confirmed.
+Queue diagnostics now detect expired worker leases, requeue stale running items, and surface healthy-vs-abnormal worker state in a more compact summary-first view.
+Artifact bundles now include a parallel-branch summary document for matrix-style verification waves, which makes branch outcomes easier to audit after partial failures.
 Planner, reviewer, and reporter guidance now derive directly from structured memory so continuity checks and handoff priorities stay visible across the full workflow.
 Research and verify steps now write structured findings back into project memory, so later plans can recall concrete context and verification evidence instead of only final handoff summaries.
 High-signal research and verify findings can now be promoted into reusable global rules, and future workflow planning will treat those rules as stronger cross-project guidance.

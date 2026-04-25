@@ -9,14 +9,15 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from app.models.dto import MemoryEntry, WorkflowRunCreateRequest
+from app.models.dto import CodexCommandSpec, CodexSessionBridgeResponse, CodexSessionSummary, MemoryEntry, WorkflowRunCreateRequest
 from app.services import workflow_run_execution as execution_service
 from app.services import workflow_backend_codex_delegate as delegate_service
 from app.services.workflow_backend_planner import execute_planner_backend, planning_brief_path
+from app.services.workflow_control_db import connect_control_db
 from app.services.workflow_backend_research import execute_research_backend, project_snapshot_path
 from app.services.workflow_backend_verify import execute_verify_backend, verification_brief_path
 from app.services.workflow_memory import global_memory_path, project_memory_path
-from app.services.workflow_run_queue import read_workflow_queue, workflow_queue_path
+from app.services.workflow_run_queue import enqueue_workflow_run, read_workflow_queue, workflow_queue_path
 from app.services.workflow_run_steps import WorkflowCancellationRequested
 from app.services.workflow_run_store import now_iso, run_store_path, save_record
 from app.services.workflow_runs import (
@@ -113,6 +114,62 @@ def test_workflow_run_is_persisted_and_listed(test_settings, tmp_path: Path) -> 
     assert loaded.dangerous_commands_confirmed_at is None
 
 
+def test_workflow_run_copies_command_previews_into_steps_and_step_runs(monkeypatch, test_settings, tmp_path: Path) -> None:
+    project_path = tmp_path / "repo"
+    project_path.mkdir()
+    (project_path / "tests").mkdir()
+    (project_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "vite build",
+                    "test": "vitest run",
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "app.services.workflow_runs.build_session_bridge",
+        lambda *args, **kwargs: CodexSessionBridgeResponse(
+            session=CodexSessionSummary(id="sess-1", thread_name="Test Session", updated_at=now_iso()),
+            project_path=str(project_path),
+            session_log_path=None,
+            can_resume=True,
+            commands=[
+                CodexCommandSpec(
+                    argv=["codex", "exec", "resume", "sess-1", "prompt"],
+                    cwd=str(project_path),
+                    mode="non_interactive",
+                    purpose="Resume the selected Codex session in non-interactive mode.",
+                )
+            ],
+            strategies=["exec_resume"],
+            warnings=[],
+        ),
+    )
+
+    record = create_workflow_run(
+        WorkflowRunCreateRequest(
+            task="Run regression tests and benchmark the build output.",
+            project_path=str(project_path),
+            codex_session_id="sess-1",
+        ),
+        test_settings,
+    )
+
+    implement_step = next(step for step in record.steps if step.id == "implement")
+    verify_tests_step = next(step for step in record.steps if step.id == "verify_tests")
+    verify_tests_run = next(step for step in record.step_runs if step.step_id == "verify_tests")
+
+    assert implement_step.command_previews
+    assert implement_step.command_previews[0].source == "codex_bridge"
+    assert [preview.label for preview in verify_tests_step.command_previews] == ["python -m pytest", "npm run test"]
+    assert [preview.label for preview in verify_tests_run.command_previews] == ["python -m pytest", "npm run test"]
+
+
 def test_workflow_run_requires_dangerous_command_approval_before_execute(test_settings, tmp_path: Path) -> None:
     project_path = tmp_path / "repo"
     project_path.mkdir()
@@ -130,6 +187,52 @@ def test_workflow_run_requires_dangerous_command_approval_before_execute(test_se
 
     approved = approve_workflow_run_dangerous_commands(record.id, str(project_path), test_settings)
     assert approved.dangerous_commands_confirmed_at is not None
+
+
+def test_workflow_run_supports_partial_command_approval_before_full_unlock(test_settings, tmp_path: Path) -> None:
+    project_path = tmp_path / "repo"
+    project_path.mkdir()
+    (project_path / "tests").mkdir()
+    (project_path / "package.json").write_text(
+        json.dumps(
+            {
+                "scripts": {
+                    "build": "vite build",
+                    "test": "vitest run",
+                }
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    record = create_workflow_run(
+        WorkflowRunCreateRequest(
+            task="Run regression tests and benchmark the build output.",
+            project_path=str(project_path),
+        ),
+        test_settings,
+    )
+
+    verify_tests = next(step for step in record.steps if step.id == "verify_tests")
+    first_command_id = verify_tests.command_previews[0].command_id
+
+    partially_approved = approve_workflow_run_dangerous_commands(
+        record.id,
+        str(project_path),
+        test_settings,
+        command_ids=[first_command_id],
+    )
+    assert partially_approved.dangerous_commands_confirmed_at is None
+    refreshed_tests = next(step for step in partially_approved.steps if step.id == "verify_tests")
+    assert refreshed_tests.command_previews[0].confirmed_at is not None
+    assert refreshed_tests.command_previews[1].confirmed_at is None
+
+    with pytest.raises(HTTPException, match="Approve the remaining"):
+        execute_workflow_run_now(record.id, str(project_path), test_settings)
+
+    fully_approved = approve_workflow_run_dangerous_commands(record.id, str(project_path), test_settings)
+    assert fully_approved.dangerous_commands_confirmed_at is not None
 
 
 def test_start_immediately_keeps_run_planned_until_dangerous_commands_are_approved(test_settings, tmp_path: Path) -> None:
@@ -237,6 +340,80 @@ def test_recover_workflow_queue_resumes_orphaned_running_run(monkeypatch, test_s
     completed = get_workflow_run(record.id, str(project_path), test_settings)
     assert completed.status == "completed"
     assert completed.attempt_count == 2
+
+
+def test_queue_dashboard_requeues_expired_items_and_marks_stale_workers(test_settings, tmp_path: Path) -> None:
+    project_path = tmp_path / "repo"
+    project_path.mkdir()
+
+    record = create_workflow_run(
+        WorkflowRunCreateRequest(
+            task="Run regression tests and benchmark the build output.",
+            project_path=str(project_path),
+        ),
+        test_settings,
+    )
+
+    enqueue_workflow_run(
+        run_id=record.id,
+        project_path=str(project_path),
+        mode="start",
+        prepared=True,
+        settings=test_settings,
+    )
+    queued_item = read_workflow_queue(test_settings)[0]
+    connection = connect_control_db(test_settings)
+    try:
+        connection.execute(
+            """
+            UPDATE workflow_run_queue
+            SET status = 'running',
+                worker_id = 'worker-stale',
+                heartbeat_at = '2026-01-01T00:00:00+00:00',
+                lease_expires_at = '2026-01-01T00:00:00+00:00'
+            WHERE id = ?
+            """,
+            (queued_item["id"],),
+        )
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO workflow_workers (
+                worker_id,
+                thread_name,
+                process_id,
+                host,
+                status,
+                started_at,
+                last_heartbeat_at,
+                current_item_id,
+                current_run_id,
+                stale_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "worker-stale",
+                "workflow-queue-worker-0",
+                123,
+                "localhost",
+                "running",
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:00+00:00",
+                queued_item["id"],
+                record.id,
+                None,
+            ),
+        )
+    finally:
+        connection.close()
+
+    dashboard = get_workflow_queue_dashboard(test_settings)
+    refreshed_item = next(item for item in dashboard.items if item.id == queued_item["id"])
+    stale_worker = next(worker for worker in dashboard.workers if worker.worker_id == "worker-stale")
+
+    assert refreshed_item.status == "queued"
+    assert dashboard.stale_worker_count >= 1
+    assert stale_worker.status == "stale"
+    assert stale_worker.stale_reason
 
 
 def test_workflow_run_executes_to_completion(monkeypatch, test_settings, tmp_path: Path) -> None:
@@ -621,6 +798,44 @@ def test_workflow_run_artifacts_bundle_supports_cockpit_review(monkeypatch, test
     assert "README.md" in documents["project_snapshot"].content
     assert documents["verification_brief"].available is True
     assert "Verification Brief" in documents["verification_brief"].content
+    assert documents["parallel_branches"].available is True
+
+
+def test_parallel_branch_summary_artifact_captures_parallel_steps(monkeypatch, test_settings, tmp_path: Path) -> None:
+    project_path = tmp_path / "repo"
+    project_path.mkdir()
+    _patch_final_reporter(monkeypatch)
+
+    def fake_execute_step(record, step_run, settings, should_cancel, set_active_process):  # noqa: ARG001
+        if step_run.step_id in {"verify_tests", "verify_build"}:
+            return f"Completed {step_run.step_id}."
+        if step_run.step_id == "implement":
+            return "Implementation completed."
+        if step_run.step_id == "review":
+            Path(record.changes_path).write_text("# Changes\n\n- branch artifact\n", encoding="utf-8")
+            return "Review completed."
+        if step_run.step_id == "report":
+            _write_report_artifacts(record)
+            return "Report completed."
+        return f"Completed step {step_run.step_id}."
+
+    monkeypatch.setattr(execution_service, "execute_step", fake_execute_step)
+
+    record = create_workflow_run(
+        WorkflowRunCreateRequest(
+            task="Benchmark multi-environment regressions and compare build outputs in parallel.",
+            project_path=str(project_path),
+        ),
+        test_settings,
+    )
+
+    _approve_run(record, test_settings)
+    executed = execute_workflow_run_now(record.id, str(project_path), test_settings)
+    artifacts = read_workflow_run_artifacts(executed.id, str(project_path), test_settings)
+    documents = {document.key: document for document in artifacts.documents}
+
+    assert "verify_tests" in documents["parallel_branches"].content
+    assert "verify_build" in documents["parallel_branches"].content
 
 
 def test_workflow_memory_is_recalled_and_written_back(monkeypatch, test_settings, tmp_path: Path) -> None:

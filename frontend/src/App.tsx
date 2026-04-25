@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   approveDangerousCommands,
-  cancelWorkflowQueueItem,
   cancelWorkflowRun,
   createWorkflowPlan,
   createWorkflowRun,
@@ -16,7 +15,6 @@ import {
   getProjectRuntime,
   getProjectTree,
   getRecentProjects,
-  getRecentSessions,
   getWorkflowAgentSessions,
   getWorkflowQueueDashboard,
   getWorkflowRun,
@@ -30,8 +28,6 @@ import {
   openWorkspace,
   parseWorkflowRunEvent,
   pickProjectDirectory,
-  prepareCodexSessionBridge,
-  requeueWorkflowQueueItem,
   resumeWorkflowRun,
   retryWorkflowRun,
 } from "./api";
@@ -40,13 +36,10 @@ import { BuildStage } from "./components/BuildStage";
 import { DiagnosticsStage } from "./components/DiagnosticsStage";
 import { ProjectStage } from "./components/ProjectStage";
 import { RunStage } from "./components/RunStage";
-import { StageNav } from "./components/StageNav";
-import type { AppStage } from "./components/StageNav";
+import { WorkspaceStage } from "./components/WorkspaceStage";
 import { useI18n } from "./i18n";
 import type {
   CodexCapabilities,
-  CodexSession,
-  CodexSessionBridge,
   CodexSummary,
   MemoryEntry,
   ProjectCapabilities,
@@ -95,12 +88,14 @@ function runNeedsDangerousApproval(run: WorkflowRun | null): boolean {
   return run.requires_dangerous_command_confirmation && !run.dangerous_commands_confirmed_at;
 }
 
+type AppView = "launcher" | "workspace";
+type WorkspaceSection = "build" | "run";
+
 export default function App() {
   const { locale, setLocale, t } = useI18n();
 
   const [summary, setSummary] = useState<CodexSummary | null>(null);
   const [capabilities, setCapabilities] = useState<CodexCapabilities | null>(null);
-  const [sessions, setSessions] = useState<CodexSession[]>([]);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [recentProjects, setRecentProjects] = useState<RecentProjectRecord[]>([]);
   const [projectCapabilities, setProjectCapabilities] = useState<ProjectCapabilities | null>(null);
@@ -112,13 +107,11 @@ export default function App() {
 
   const [selectedProject, setSelectedProject] = useState("");
   const [manualProjectPath, setManualProjectPath] = useState("");
-  const [selectedSessionId, setSelectedSessionId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
-  const [activeStage, setActiveStage] = useState<AppStage>("project");
+  const [activeView, setActiveView] = useState<AppView>("launcher");
+  const [activeWorkspaceSection, setActiveWorkspaceSection] = useState<WorkspaceSection>("build");
 
-  const [task, setTask] = useState(
-    "Audit the current repository, design a strict multi-agent workflow, and scaffold the first backend/frontend implementation plan.",
-  );
+  const [task, setTask] = useState("");
   const [allowNetwork, setAllowNetwork] = useState(true);
   const [allowInstalls, setAllowInstalls] = useState(true);
 
@@ -131,7 +124,6 @@ export default function App() {
   const [selectedArtifactKey, setSelectedArtifactKey] = useState<WorkflowArtifactDocument["key"]>("report");
   const [queueDashboard, setQueueDashboard] = useState<WorkflowQueueDashboard | null>(null);
   const [agentSessions, setAgentSessions] = useState<WorkflowAgentSession[]>([]);
-  const [bridge, setBridge] = useState<CodexSessionBridge | null>(null);
   const [mirrorResult, setMirrorResult] = useState<ProjectRuntimeMirrorResult | null>(null);
 
   const [bootstrapError, setBootstrapError] = useState("");
@@ -141,7 +133,6 @@ export default function App() {
   const [artifactError, setArtifactError] = useState("");
   const [queueError, setQueueError] = useState("");
   const [agentSessionsError, setAgentSessionsError] = useState("");
-  const [bridgeError, setBridgeError] = useState("");
   const [mirrorError, setMirrorError] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -150,7 +141,6 @@ export default function App() {
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [queueLoading, setQueueLoading] = useState(false);
   const [agentSessionsLoading, setAgentSessionsLoading] = useState(false);
-  const [bridgeLoading, setBridgeLoading] = useState(false);
   const [mirrorLoading, setMirrorLoading] = useState(false);
 
   const artifactRefreshToken = useMemo(() => {
@@ -171,50 +161,63 @@ export default function App() {
         const search = new URLSearchParams(window.location.search);
         const projectFromUrl = search.get("project");
         const runFromUrl = search.get("run");
-        const stageFromUrl = search.get("stage");
+        const viewFromUrl = search.get("view");
 
         const [
           summaryResult,
           capabilitiesResult,
-          sessionsResult,
           projectsResult,
           recentProjectsResult,
           projectCapabilitiesResult,
           projectRootsResult,
-        ] = await Promise.all([
+        ] = await Promise.allSettled([
           getCodexSummary(),
           getCodexCapabilities(),
-          getRecentSessions(),
           getDiscoveredProjects(),
           getRecentProjects(),
           getProjectCapabilities(),
           getProjectRoots(),
         ]);
 
-        setSummary(summaryResult);
-        setCapabilities(capabilitiesResult);
-        setSessions(sessionsResult);
-        setProjects(projectsResult);
-        setRecentProjects(recentProjectsResult);
-        setProjectCapabilities(projectCapabilitiesResult);
-        setProjectRoots(projectRootsResult.roots);
-        if (projectRootsResult.roots[0]) {
-          setBrowserRoot(projectRootsResult.roots[0].path);
+        if (summaryResult.status === "fulfilled") {
+          setSummary(summaryResult.value);
         }
-
-        if (projectFromUrl) {
-          setSelectedProject(projectFromUrl);
-          setManualProjectPath(projectFromUrl);
-        } else if (recentProjectsResult[0]) {
-          setSelectedProject(recentProjectsResult[0].path);
-          setManualProjectPath(recentProjectsResult[0].path);
+        if (capabilitiesResult.status === "fulfilled") {
+          setCapabilities(capabilitiesResult.value);
+        }
+        if (projectsResult.status === "fulfilled") {
+          setProjects(projectsResult.value);
+        }
+        if (recentProjectsResult.status === "fulfilled") {
+          setRecentProjects(recentProjectsResult.value);
+        }
+        if (projectCapabilitiesResult.status === "fulfilled") {
+          setProjectCapabilities(projectCapabilitiesResult.value);
+        }
+        if (projectRootsResult.status === "fulfilled") {
+          setProjectRoots(projectRootsResult.value.roots);
+          if (projectRootsResult.value.roots[0]) {
+            setBrowserRoot(projectRootsResult.value.roots[0].path);
+          }
         }
 
         if (runFromUrl) {
           setSelectedRunId(runFromUrl);
         }
-        if (stageFromUrl === "project" || stageFromUrl === "build" || stageFromUrl === "run" || stageFromUrl === "diagnostics") {
-          setActiveStage(stageFromUrl);
+
+        const initialProject =
+          projectFromUrl ??
+          (recentProjectsResult.status === "fulfilled" ? recentProjectsResult.value[0]?.path ?? "" : "");
+        const shouldOpenWorkspace = viewFromUrl === "workspace" || Boolean(initialProject);
+
+        if (initialProject) {
+          setManualProjectPath(initialProject);
+        }
+
+        if (shouldOpenWorkspace && initialProject) {
+          await loadProjectState(initialProject, runFromUrl);
+        } else {
+          setActiveView("launcher");
         }
       } catch (error) {
         setBootstrapError(error instanceof Error ? error.message : "Failed to load app bootstrap data.");
@@ -236,9 +239,9 @@ export default function App() {
     } else {
       search.delete("run");
     }
-    search.set("stage", activeStage);
+    search.set("view", activeView);
     window.history.replaceState({}, "", `${window.location.pathname}?${search.toString()}`);
-  }, [selectedProject, selectedRunId, activeStage]);
+  }, [selectedProject, selectedRunId, activeView]);
 
   useEffect(() => {
     let cancelled = false;
@@ -453,28 +456,32 @@ export default function App() {
     };
   }, [selectedProject, selectedRunId, selectedRun?.status]);
 
-  async function loadProjectState(projectPath: string): Promise<void> {
+  async function loadProjectState(projectPath: string, preferredRunId?: string | null): Promise<void> {
     setRuntimeLoading(true);
     setRuntimeError("");
     setRunError("");
     try {
-      const [runtimeResult, runsResult, recentResult] = await Promise.all([
+      const [runtimeResultRaw, runsResult, recentResult] = await Promise.all([
         getProjectRuntime(projectPath),
         getWorkflowRuns(projectPath),
         getRecentProjects(),
       ]);
+      const runtimeResult =
+        runtimeResultRaw.state === "missing" ? await initProjectRuntime(projectPath) : runtimeResultRaw;
       setSelectedProject(projectPath);
       setManualProjectPath(projectPath);
       setRuntime(runtimeResult);
       setRuns(runsResult);
       setRecentProjects(recentResult);
       setSelectedRunId((currentRunId) => {
-        if (runsResult.some((run) => run.id === currentRunId)) {
-          return currentRunId;
+        const prioritizedRunId = preferredRunId || currentRunId;
+        if (prioritizedRunId && runsResult.some((run) => run.id === prioritizedRunId)) {
+          return prioritizedRunId;
         }
         return runsResult[0]?.id ?? "";
       });
-      setActiveStage("build");
+      setActiveWorkspaceSection(preferredRunId || runsResult[0]?.id ? "run" : "build");
+      setActiveView("workspace");
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Failed to load project runtime state.");
     } finally {
@@ -514,9 +521,38 @@ export default function App() {
     return t(`status.${status}`);
   }
 
+  function runtimeStateLabel(state: ProjectRuntime["state"] | null | undefined): string {
+    if (!state) {
+      return t("common.waiting");
+    }
+    return t(`runtime.${state}`);
+  }
+
+  function agentRoleLabel(role: string): string {
+    const keyByRole: Record<string, string> = {
+      planner: "role.planner",
+      researcher: "role.researcher",
+      coder: "role.coder",
+      "runner/tester": "role.runnerTester",
+      reviewer: "role.reviewer",
+      summarizer: "role.summarizer",
+    };
+    const key = keyByRole[role];
+    return key ? t(key) : role;
+  }
+
   function runStatusNote(run: WorkflowRun): string | null {
     if (runNeedsDangerousApproval(run)) {
       return t("run.awaitingApproval");
+    }
+    if (run.status === "running" && run.cancel_requested_at) {
+      return `${t("run.cancelRun")} ${t("common.at")} ${formatDateTime(run.cancel_requested_at)}`;
+    }
+    if (run.status === "cancelled" && run.cancelled_at) {
+      return `${t("status.cancelled")} ${t("common.at")} ${formatDateTime(run.cancelled_at)}`;
+    }
+    if (run.dangerous_commands_confirmed_at) {
+      return `${t("run.safetyApproved")} ${t("common.at")} ${formatDateTime(run.dangerous_commands_confirmed_at)}`;
     }
     if (run.status === "running" && run.cancel_requested_at) {
       return `${t("run.cancelRun")} · ${formatDateTime(run.cancel_requested_at)}`;
@@ -600,6 +636,7 @@ export default function App() {
         project_path: normalized,
         source,
       });
+      await initProjectRuntime(workspace.project_path);
       await loadProjectState(workspace.project_path);
     } catch (error) {
       setRuntimeError(error instanceof Error ? error.message : "Failed to open the project.");
@@ -626,6 +663,10 @@ export default function App() {
     await handleOpenProject(path, "filesystem");
   }
 
+  function handleOpenLauncher() {
+    setActiveView("launcher");
+  }
+
   async function handleDraftWorkflow() {
     setLoading(true);
     setPlanError("");
@@ -635,9 +676,10 @@ export default function App() {
         project_path: selectedProject || null,
         allow_network: allowNetwork,
         allow_installs: allowInstalls,
+        locale,
       });
       setPlan(result);
-      setActiveStage("build");
+      setActiveWorkspaceSection("build");
     } catch (error) {
       setPlanError(error instanceof Error ? error.message : "Failed to draft workflow.");
     } finally {
@@ -712,25 +754,6 @@ export default function App() {
     }
   }
 
-  async function handlePrepareBridge(sessionId: string) {
-    setSelectedSessionId(sessionId);
-    setBridgeLoading(true);
-    setBridgeError("");
-    try {
-      const result = await prepareCodexSessionBridge(sessionId, {
-        project_path: selectedProject || null,
-        prompt: task,
-        sandbox_mode: "workspace-write",
-        approval_policy: "on-request",
-      });
-      setBridge(result);
-    } catch (error) {
-      setBridgeError(error instanceof Error ? error.message : "Failed to prepare the Codex session bridge.");
-    } finally {
-      setBridgeLoading(false);
-    }
-  }
-
   async function handleCreateRun() {
     if (!selectedProject) {
       setRunError(t("project.notSelected"));
@@ -744,8 +767,7 @@ export default function App() {
         project_path: selectedProject,
         allow_network: allowNetwork,
         allow_installs: allowInstalls,
-        codex_session_id: selectedSessionId || null,
-        resume_prompt: selectedSessionId ? task : undefined,
+        locale,
         start_immediately: true,
       });
       setPlan(planFromRun(result));
@@ -758,7 +780,8 @@ export default function App() {
       ]);
       setRuntime(runtimeResult);
       setRuns(upsertRunRecord(runsResult, result));
-      setActiveStage("run");
+      setActiveWorkspaceSection("run");
+      setActiveView("workspace");
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "Failed to create the workflow run.");
     } finally {
@@ -778,7 +801,8 @@ export default function App() {
       setSelectedRunId(result.id);
       setSelectedRun(result);
       setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
-      setActiveStage("run");
+      setActiveWorkspaceSection("run");
+      setActiveView("workspace");
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "Failed to start the workflow run.");
     } finally {
@@ -805,7 +829,7 @@ export default function App() {
     }
   }
 
-  async function handleApproveRun(runId: string) {
+  async function handleApproveRun(runId: string, commandIds?: string[]) {
     if (!selectedProject) {
       setRunError(t("project.notSelected"));
       return;
@@ -813,7 +837,11 @@ export default function App() {
     setRunLoading(true);
     setRunError("");
     try {
-      const result = await approveDangerousCommands(runId, selectedProject);
+      const result = await approveDangerousCommands(
+        runId,
+        selectedProject,
+        commandIds && commandIds.length ? { command_ids: commandIds } : undefined,
+      );
       setSelectedRunId(result.id);
       setSelectedRun(result);
       setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
@@ -836,7 +864,8 @@ export default function App() {
       setSelectedRunId(result.id);
       setSelectedRun(result);
       setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
-      setActiveStage("run");
+      setActiveWorkspaceSection("run");
+      setActiveView("workspace");
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "Failed to resume the workflow run.");
     } finally {
@@ -856,37 +885,12 @@ export default function App() {
       setSelectedRunId(result.id);
       setSelectedRun(result);
       setRuns((currentRuns) => upsertRunRecord(currentRuns, result));
-      setActiveStage("run");
+      setActiveWorkspaceSection("run");
+      setActiveView("workspace");
     } catch (error) {
       setRunError(error instanceof Error ? error.message : "Failed to retry the workflow run.");
     } finally {
       setRunLoading(false);
-    }
-  }
-
-  async function handleCancelQueueItem(itemId: string) {
-    setQueueLoading(true);
-    try {
-      await cancelWorkflowQueueItem(itemId);
-      setQueueDashboard(await getWorkflowQueueDashboard());
-      setQueueError("");
-    } catch (error) {
-      setQueueError(error instanceof Error ? error.message : "Failed to cancel the queue item.");
-    } finally {
-      setQueueLoading(false);
-    }
-  }
-
-  async function handleRequeueQueueItem(itemId: string) {
-    setQueueLoading(true);
-    try {
-      await requeueWorkflowQueueItem(itemId);
-      setQueueDashboard(await getWorkflowQueueDashboard());
-      setQueueError("");
-    } catch (error) {
-      setQueueError(error instanceof Error ? error.message : "Failed to requeue the queue item.");
-    } finally {
-      setQueueLoading(false);
     }
   }
 
@@ -897,9 +901,7 @@ export default function App() {
 
       {bootstrapError ? <div className="banner error">{bootstrapError}</div> : null}
 
-      <StageNav t={t} activeStage={activeStage} onStageChange={setActiveStage} />
-
-      {activeStage === "project" ? (
+      {activeView === "launcher" || !selectedProject ? (
         <ProjectStage
           t={t}
           projects={projects}
@@ -931,83 +933,102 @@ export default function App() {
         />
       ) : null}
 
-      {activeStage === "build" ? (
-        <BuildStage
+      {activeView === "workspace" && selectedProject ? (
+        <WorkspaceStage
           t={t}
           selectedProject={selectedProject}
-          sessions={sessions}
-          selectedSessionId={selectedSessionId}
-          bridge={bridge}
-          bridgeLoading={bridgeLoading}
-          bridgeError={bridgeError}
-          task={task}
-          allowNetwork={allowNetwork}
-          allowInstalls={allowInstalls}
-          plan={plan}
-          loading={loading}
-          runLoading={runLoading}
-          planError={planError}
-          runError={runError}
-          backendLabel={backendLabel}
-          executionLabel={executionLabel}
-          onTaskChange={setTask}
-          onAllowNetworkChange={setAllowNetwork}
-          onAllowInstallsChange={setAllowInstalls}
-          onPrepareBridge={(sessionId) => void handlePrepareBridge(sessionId)}
-          onDraftWorkflow={() => void handleDraftWorkflow()}
-          onCreateRun={() => void handleCreateRun()}
-        />
-      ) : null}
-
-      {activeStage === "run" ? (
-        <RunStage
-          t={t}
-          selectedProject={selectedProject}
-          runs={runs}
-          selectedRunId={selectedRunId}
-          selectedRun={selectedRun}
-          runArtifacts={runArtifacts}
-          artifactLoading={artifactLoading}
-          artifactError={artifactError}
-          runLog={runLog}
-          agentSessions={agentSessions}
-          agentSessionsLoading={agentSessionsLoading}
-          agentSessionsError={agentSessionsError}
-          selectedArtifactKey={selectedArtifactKey}
-          onSelectRun={setSelectedRunId}
-          onSelectArtifact={setSelectedArtifactKey}
-          onExecuteRun={(runId) => void handleExecuteRun(runId)}
-          onCancelRun={(runId) => void handleCancelRun(runId)}
-          onApproveRun={(runId) => void handleApproveRun(runId)}
-          onResumeRun={(runId) => void handleResumeRun(runId)}
-          onRetryRun={(runId) => void handleRetryRun(runId)}
-          runLoading={runLoading}
-          runNeedsDangerousApproval={runNeedsDangerousApproval}
-          runStatusNote={runStatusNote}
-          backendLabel={backendLabel}
-          statusLabel={statusLabel}
-          formatDateTime={formatDateTime}
-          memorySummary={memorySummary}
-          finalizedStepCount={finalizedStepCount}
-          readyArtifactCount={readyArtifactCount}
-          writtenMemoryCount={writtenMemoryCount}
-          recalledMemoryCount={recalledMemoryCount}
-          promotedGlobalRuleCount={promotedGlobalRuleCount}
-        />
-      ) : null}
-
-      {activeStage === "diagnostics" ? (
-        <DiagnosticsStage
-          t={t}
-          queueDashboard={queueDashboard}
-          queueLoading={queueLoading}
-          queueError={queueError}
-          bridge={bridge}
-          bridgeError={bridgeError}
+          runtime={runtime}
+          runtimeLoading={runtimeLoading}
+          runtimeError={runtimeError}
+          mirrorLoading={mirrorLoading}
           mirrorResult={mirrorResult}
-          queueItemNote={queueItemNote}
-          onCancelQueueItem={(itemId) => void handleCancelQueueItem(itemId)}
-          onRequeueQueueItem={(itemId) => void handleRequeueQueueItem(itemId)}
+          mirrorError={mirrorError}
+          recentProjects={recentProjects}
+          projects={projects}
+          sourceLabel={sourceLabel}
+          runtimeStateLabel={runtimeStateLabel}
+          activeSection={activeWorkspaceSection}
+          onSectionChange={setActiveWorkspaceSection}
+          onOpenProject={(path, source) => void handleOpenProject(path, source)}
+          onOpenLauncher={handleOpenLauncher}
+          onInitRuntime={() => void handleInitRuntime()}
+          onMirrorRuntime={() => void handleMirrorRuntime()}
+          onExportRuntime={() => void handleExportRuntime()}
+          onImportRuntime={() => void handleImportRuntime()}
+          buildContent={
+            <BuildStage
+              embedded
+              t={t}
+              selectedProject={selectedProject}
+              task={task}
+              allowNetwork={allowNetwork}
+              allowInstalls={allowInstalls}
+              plan={plan}
+              loading={loading}
+              runLoading={runLoading}
+              planError={planError}
+              runError={runError}
+              backendLabel={backendLabel}
+              executionLabel={executionLabel}
+              agentRoleLabel={agentRoleLabel}
+              onTaskChange={setTask}
+              onAllowNetworkChange={setAllowNetwork}
+              onAllowInstallsChange={setAllowInstalls}
+              onDraftWorkflow={() => void handleDraftWorkflow()}
+              onCreateRun={() => void handleCreateRun()}
+            />
+          }
+          runContent={
+            <RunStage
+              embedded
+              t={t}
+              selectedProject={selectedProject}
+              runs={runs}
+              selectedRunId={selectedRunId}
+              selectedRun={selectedRun}
+              runArtifacts={runArtifacts}
+              artifactLoading={artifactLoading}
+              artifactError={artifactError}
+              runLog={runLog}
+              agentSessions={agentSessions}
+              agentSessionsLoading={agentSessionsLoading}
+              agentSessionsError={agentSessionsError}
+              selectedArtifactKey={selectedArtifactKey}
+              onSelectRun={(runId) => {
+                setSelectedRunId(runId);
+                setActiveWorkspaceSection("run");
+              }}
+              onSelectArtifact={setSelectedArtifactKey}
+              onExecuteRun={(runId) => void handleExecuteRun(runId)}
+              onCancelRun={(runId) => void handleCancelRun(runId)}
+              onApproveRun={(runId, commandIds) => void handleApproveRun(runId, commandIds)}
+              onResumeRun={(runId) => void handleResumeRun(runId)}
+              onRetryRun={(runId) => void handleRetryRun(runId)}
+              runLoading={runLoading}
+              runNeedsDangerousApproval={runNeedsDangerousApproval}
+              runStatusNote={runStatusNote}
+              backendLabel={backendLabel}
+              agentRoleLabel={agentRoleLabel}
+              statusLabel={statusLabel}
+              formatDateTime={formatDateTime}
+              memorySummary={memorySummary}
+              finalizedStepCount={finalizedStepCount}
+              readyArtifactCount={readyArtifactCount}
+              writtenMemoryCount={writtenMemoryCount}
+              recalledMemoryCount={recalledMemoryCount}
+              promotedGlobalRuleCount={promotedGlobalRuleCount}
+            />
+          }
+          diagnosticsContent={
+            <DiagnosticsStage
+              embedded
+              t={t}
+              queueDashboard={queueDashboard}
+              queueLoading={queueLoading}
+              queueError={queueError}
+              queueItemNote={queueItemNote}
+            />
+          }
         />
       ) : null}
     </div>

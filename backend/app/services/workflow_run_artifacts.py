@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from app.models.dto import WorkflowArtifactDocument, WorkflowRunArtifactsResponse, WorkflowRunRecord
-from app.services.workflow_artifact_paths import planning_brief_path, project_snapshot_path, verification_brief_path
+from app.services.workflow_artifact_paths import parallel_branches_path, planning_brief_path, project_snapshot_path, verification_brief_path
 from app.services.workflow_memory import memory_context_markdown
 
 
@@ -268,6 +268,49 @@ def write_report(record: WorkflowRunRecord) -> str:
     return "Updated the final report with step outcomes, changes, and captured Codex output."
 
 
+def write_parallel_branches_summary(record: WorkflowRunRecord) -> str:
+    artifact_path = parallel_branches_path(record)
+    parallel_steps = [step_run for step_run in record.step_runs if step_run.execution == "parallel"]
+    if not parallel_steps:
+        artifact_path.write_text(
+            "\n".join(
+                [
+                    "# Parallel Branches",
+                    "",
+                    "No parallel branch steps were planned for this run.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        return "No parallel branches were present for this run."
+
+    lines = [
+        "# Parallel Branches",
+        "",
+        f"Run: `{record.id}`",
+        "",
+        "| Step | Status | Summary | Commands |",
+        "|------|--------|---------|----------|",
+    ]
+    for step_run in parallel_steps:
+        command_list = "<br>".join(" ".join(preview.argv) for preview in step_run.command_previews) or "-"
+        summary = (step_run.summary or "-").replace("|", "/")
+        lines.append(f"| `{step_run.step_id}` | `{step_run.status}` | {summary} | {command_list} |")
+    lines.extend(
+        [
+            "",
+            "## Notes",
+            "",
+            "- Parallel branch steps can be claimed by different workers.",
+            "- Failed branches still flow into review/report, so the final run may fail after artifacts are written.",
+            "",
+        ]
+    )
+    artifact_path.write_text("\n".join(lines), encoding="utf-8")
+    return f"Wrote a parallel branch summary covering {len(parallel_steps)} branch step(s)."
+
+
 def _artifact_text(path: Path | None) -> tuple[bool, str]:
     if path is None or not path.exists():
         return False, ""
@@ -276,8 +319,10 @@ def _artifact_text(path: Path | None) -> tuple[bool, str]:
 
 def _artifact_documents(record: WorkflowRunRecord) -> list[WorkflowArtifactDocument]:
     snapshot_path = project_snapshot_path(record)
+    branch_summary_path = parallel_branches_path(record)
     memory_context_path = Path(record.run_path) / "memory-context.md"
     memory_context_path.write_text(memory_context_markdown(record), encoding="utf-8")
+    write_parallel_branches_summary(record)
     document_specs = [
         ("planning_brief", "Planning brief", planning_brief_path(record), "markdown"),
         ("report", "Final report", Path(record.report_path), "markdown"),
@@ -285,6 +330,7 @@ def _artifact_documents(record: WorkflowRunRecord) -> list[WorkflowArtifactDocum
         ("last_message", "Codex final message", Path(record.last_message_path) if record.last_message_path else None, "text"),
         ("project_snapshot", "Research snapshot", snapshot_path, "markdown"),
         ("verification_brief", "Verification brief", verification_brief_path(record), "markdown"),
+        ("parallel_branches", "Parallel branches", branch_summary_path, "markdown"),
         ("memory_context", "Workflow memory", memory_context_path, "markdown"),
     ]
 

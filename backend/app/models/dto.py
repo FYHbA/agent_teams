@@ -196,6 +196,7 @@ class WorkflowStep(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     allow_failed_dependencies: bool = False
     requires_confirmation: bool = False
+    command_previews: list["WorkflowCommandPreview"] = Field(default_factory=list)
 
 
 class WorkflowPlanRequest(BaseModel):
@@ -203,6 +204,7 @@ class WorkflowPlanRequest(BaseModel):
     project_path: str | None = None
     allow_network: bool | None = None
     allow_installs: bool | None = None
+    locale: Literal["zh-CN", "en-US"] | None = None
 
 
 class WorkflowPlanResponse(BaseModel):
@@ -224,6 +226,7 @@ class WorkflowRunCreateRequest(BaseModel):
     project_path: str = Field(min_length=1, description="Absolute path to the managed project.")
     allow_network: bool | None = None
     allow_installs: bool | None = None
+    locale: Literal["zh-CN", "en-US"] | None = None
     codex_session_id: str | None = None
     resume_prompt: str | None = None
     start_immediately: bool = False
@@ -259,6 +262,20 @@ class WorkflowRoleMemoryGuidance(BaseModel):
     reporter: list[str] = Field(default_factory=list)
 
 
+class WorkflowCommandPreview(BaseModel):
+    command_id: str
+    label: str
+    argv: list[str]
+    cwd: str | None = None
+    source: Literal["verification", "codex_bridge"] = "verification"
+    requires_confirmation: bool = False
+    confirmed_at: str | None = None
+
+
+class DangerousCommandApprovalRequest(BaseModel):
+    command_ids: list[str] = Field(default_factory=list)
+
+
 class WorkflowStepRun(BaseModel):
     step_id: str
     title: str
@@ -276,6 +293,7 @@ class WorkflowStepRun(BaseModel):
     depends_on: list[str] = Field(default_factory=list)
     allow_failed_dependencies: bool = False
     status: Literal["pending", "running", "completed", "failed", "skipped", "cancelled"]
+    command_previews: list[WorkflowCommandPreview] = Field(default_factory=list)
     started_at: str | None = None
     completed_at: str | None = None
     summary: str | None = None
@@ -328,7 +346,16 @@ class WorkflowRunLogResponse(BaseModel):
 
 
 class WorkflowArtifactDocument(BaseModel):
-    key: Literal["planning_brief", "report", "changes", "last_message", "project_snapshot", "verification_brief", "memory_context"]
+    key: Literal[
+        "planning_brief",
+        "report",
+        "changes",
+        "last_message",
+        "project_snapshot",
+        "verification_brief",
+        "parallel_branches",
+        "memory_context",
+    ]
     title: str
     path: str | None
     content_type: Literal["markdown", "text"]
@@ -366,11 +393,12 @@ class WorkflowWorkerRecord(BaseModel):
     thread_name: str
     process_id: int
     host: str
-    status: Literal["idle", "running"]
+    status: Literal["idle", "running", "stale"]
     started_at: str
     last_heartbeat_at: str
     current_item_id: str | None = None
     current_run_id: str | None = None
+    stale_reason: str | None = None
 
 
 class WorkflowQueueDashboardResponse(BaseModel):
@@ -380,6 +408,7 @@ class WorkflowQueueDashboardResponse(BaseModel):
     running_count: int
     terminal_count: int
     stale_count: int
+    stale_worker_count: int = 0
 
 
 class WorkflowAgentSessionRecord(BaseModel):

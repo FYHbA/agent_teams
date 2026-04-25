@@ -122,7 +122,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             started_at TEXT NOT NULL,
             last_heartbeat_at TEXT NOT NULL,
             current_item_id TEXT NULL,
-            current_run_id TEXT NULL
+            current_run_id TEXT NULL,
+            stale_reason TEXT NULL
         )
         """
     )
@@ -132,6 +133,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         ON workflow_workers (status, last_heartbeat_at DESC)
         """
     )
+    _ensure_column(connection, "workflow_workers", "stale_reason", "TEXT NULL")
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS workflow_agent_sessions (

@@ -38,6 +38,7 @@ class WorkflowQueueItem(TypedDict):
 
 
 DEFAULT_WORKER_LEASE_SECONDS = 20
+STALE_WORKER_GRACE_MULTIPLIER = 2
 
 
 def workflow_queue_path(settings: Settings):
@@ -265,6 +266,7 @@ def claim_next_workflow_queue_item(settings: Settings, worker_id: str, lease_sec
     try:
         connection.execute("BEGIN IMMEDIATE")
         _requeue_expired_running_items(connection)
+        _mark_stale_workers(connection)
         row = connection.execute(
             """
             SELECT
@@ -437,15 +439,18 @@ def heartbeat_workflow_queue_item(
 
 
 def get_workflow_queue_dashboard(settings: Settings) -> WorkflowQueueDashboardResponse:
+    _cleanup_stale_runtime_state(settings)
     items = [WorkflowQueueItemRecord.model_validate(item) for item in read_workflow_queue(settings)]
+    workers = list_workflow_workers(settings)
     stale_count = sum(1 for item in items if _is_stale(item.lease_expires_at, item.status))
     return WorkflowQueueDashboardResponse(
         items=items,
-        workers=list_workflow_workers(settings),
+        workers=workers,
         queued_count=sum(1 for item in items if item.status == "queued"),
         running_count=sum(1 for item in items if item.status == "running"),
         terminal_count=sum(1 for item in items if item.status in {"completed", "failed", "cancelled"}),
         stale_count=stale_count,
+        stale_worker_count=sum(1 for worker in workers if worker.status == "stale"),
     )
 
 
@@ -625,6 +630,64 @@ def _requeue_expired_running_items(connection: sqlite3.Connection) -> int:
         (requeued_at, requeued_at),
     )
     return int(cursor.rowcount)
+
+
+def _mark_stale_workers(connection: sqlite3.Connection) -> int:
+    now = datetime.now(timezone.utc)
+    stale_cutoff = (now - timedelta(seconds=DEFAULT_WORKER_LEASE_SECONDS * STALE_WORKER_GRACE_MULTIPLIER)).isoformat()
+    now_iso_value = now.isoformat()
+    cursor = connection.execute(
+        """
+        UPDATE workflow_workers
+        SET status = 'stale',
+            stale_reason = CASE
+                WHEN current_item_id IS NOT NULL AND EXISTS (
+                    SELECT 1
+                    FROM workflow_run_queue q
+                    WHERE q.id = workflow_workers.current_item_id
+                      AND (
+                        q.status != 'running'
+                        OR (q.lease_expires_at IS NOT NULL AND q.lease_expires_at < ?)
+                      )
+                ) THEN 'Worker heartbeat is stale or its claimed queue item lost the lease.'
+                ELSE 'Worker heartbeat has not been refreshed within the stale grace window.'
+            END
+        WHERE status = 'running'
+          AND (
+            last_heartbeat_at < ?
+            OR (
+                current_item_id IS NOT NULL
+                AND EXISTS (
+                    SELECT 1
+                    FROM workflow_run_queue q
+                    WHERE q.id = workflow_workers.current_item_id
+                      AND (
+                        q.status != 'running'
+                        OR (q.lease_expires_at IS NOT NULL AND q.lease_expires_at < ?)
+                      )
+                )
+            )
+          )
+        """,
+        (now_iso_value, stale_cutoff, now_iso_value),
+    )
+    return int(cursor.rowcount)
+
+
+def _cleanup_stale_runtime_state(settings: Settings) -> tuple[int, int]:
+    initialize_control_db(settings)
+    connection = connect_control_db(settings)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        requeued = _requeue_expired_running_items(connection)
+        stale_workers = _mark_stale_workers(connection)
+        connection.commit()
+        return requeued, stale_workers
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def _requeue_all_running_items(connection: sqlite3.Connection) -> int:

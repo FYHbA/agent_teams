@@ -297,14 +297,59 @@ def _prepare_for_retry(record: WorkflowRunRecord) -> None:
         _reset_step(step_run)
 
 
+def _dangerous_command_previews(record: WorkflowRunRecord):
+    previews = []
+    seen: set[str] = set()
+    for step_run in record.step_runs:
+        for preview in step_run.command_previews:
+            if not preview.requires_confirmation or preview.command_id in seen:
+                continue
+            previews.append(preview)
+            seen.add(preview.command_id)
+    if previews:
+        return previews
+
+    for step in record.steps:
+        for preview in step.command_previews:
+            if not preview.requires_confirmation or preview.command_id in seen:
+                continue
+            previews.append(preview)
+            seen.add(preview.command_id)
+    return previews
+
+
+def _pending_dangerous_command_previews(record: WorkflowRunRecord):
+    return [preview for preview in _dangerous_command_previews(record) if preview.confirmed_at is None]
+
+
+def _sync_dangerous_confirmation_state(record: WorkflowRunRecord) -> None:
+    previews = _dangerous_command_previews(record)
+    if not previews:
+        return
+    if all(preview.confirmed_at for preview in previews):
+        latest = max(preview.confirmed_at or "" for preview in previews)
+        record.dangerous_commands_confirmed_at = latest or now_iso()
+        return
+    record.dangerous_commands_confirmed_at = None
+
+
 def _ensure_dangerous_commands_are_confirmed(record: WorkflowRunRecord, mode: RunMode) -> None:
-    if not record.requires_dangerous_command_confirmation or record.dangerous_commands_confirmed_at:
+    if not record.requires_dangerous_command_confirmation:
+        return
+    pending = _pending_dangerous_command_previews(record)
+    if not pending and record.dangerous_commands_confirmed_at:
+        return
+    if not pending and not _dangerous_command_previews(record) and record.dangerous_commands_confirmed_at:
         return
     raise HTTPException(
         status_code=409,
         detail=(
             f"Run requires dangerous command confirmation before it can {mode}: {record.id}. "
-            "Approve the run first."
+            + (
+                f"Approve the remaining {len(pending)} command(s) first."
+                if pending
+                else "Approve the run first."
+            )
         ),
     )
 
@@ -1080,19 +1125,59 @@ def approve_workflow_run_dangerous_commands(
     run_id: str,
     project_path_str: str | None,
     settings: Settings,
+    *,
+    command_ids: list[str] | None = None,
 ) -> WorkflowRunRecord:
     record = get_workflow_run(run_id, project_path_str, settings)
     if not record.requires_dangerous_command_confirmation:
         return record
     if record.status == "running":
         raise HTTPException(status_code=409, detail=f"Running runs cannot be re-approved: {record.id}")
-    if record.dangerous_commands_confirmed_at:
+    if record.dangerous_commands_confirmed_at and not _pending_dangerous_command_previews(record):
         return record
 
+    previews = _dangerous_command_previews(record)
+    if not previews:
+        now = now_iso()
+        record.dangerous_commands_confirmed_at = now
+        record.updated_at = now
+        append_log(record, f"Dangerous command execution approved for run `{record.id}`.")
+        save_record(record, settings)
+        return record
+
+    target_ids = command_ids or [preview.command_id for preview in previews if preview.confirmed_at is None]
+    preview_ids = {preview.command_id for preview in previews}
+    unknown_ids = [command_id for command_id in target_ids if command_id not in preview_ids]
+    if unknown_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown dangerous command preview id(s): {', '.join(unknown_ids)}",
+        )
+
     now = now_iso()
-    record.dangerous_commands_confirmed_at = now
     record.updated_at = now
-    append_log(record, f"Dangerous command execution approved for run `{record.id}`.")
+    approved_labels: list[str] = []
+
+    for step in record.steps:
+        for preview in step.command_previews:
+            if preview.command_id in target_ids and preview.confirmed_at is None:
+                preview.confirmed_at = now
+                approved_labels.append(preview.label)
+
+    for step_run in record.step_runs:
+        for preview in step_run.command_previews:
+            if preview.command_id in target_ids and preview.confirmed_at is None:
+                preview.confirmed_at = now
+
+    _sync_dangerous_confirmation_state(record)
+    if approved_labels:
+        append_log(
+            record,
+            "Approved dangerous command preview(s) for run "
+            f"`{record.id}`: {', '.join(approved_labels)}.",
+        )
+    if record.dangerous_commands_confirmed_at:
+        append_log(record, f"All dangerous command previews are approved for run `{record.id}`.")
     save_record(record, settings)
     return record
 

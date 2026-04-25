@@ -164,6 +164,7 @@ export function createWorkflowPlan(payload: {
   project_path: string | null;
   allow_network: boolean;
   allow_installs: boolean;
+  locale?: "zh-CN" | "en-US";
 }): Promise<WorkflowPlan> {
   return fetchJson<WorkflowPlan>("/api/workflows/plan", {
     method: "POST",
@@ -176,6 +177,7 @@ export function createWorkflowRun(payload: {
   project_path: string;
   allow_network: boolean;
   allow_installs: boolean;
+  locale?: "zh-CN" | "en-US";
   codex_session_id?: string | null;
   resume_prompt?: string;
   start_immediately?: boolean;
@@ -230,16 +232,22 @@ export function cancelWorkflowRun(runId: string, projectPath?: string): Promise<
   );
 }
 
-export function approveDangerousCommands(runId: string, projectPath?: string): Promise<WorkflowRun> {
+export function approveDangerousCommands(
+  runId: string,
+  projectPath?: string,
+  payload?: { command_ids?: string[] },
+): Promise<WorkflowRun> {
   if (!projectPath) {
     return fetchJson<WorkflowRun>(`/api/workflows/runs/${encodeURIComponent(runId)}/approve-dangerous`, {
       method: "POST",
+      body: JSON.stringify(payload ?? {}),
     });
   }
   return fetchJson<WorkflowRun>(
     `/api/workflows/runs/${encodeURIComponent(runId)}/approve-dangerous?project_path=${encodeURIComponent(projectPath)}`,
     {
       method: "POST",
+      body: JSON.stringify(payload ?? {}),
     },
   );
 }

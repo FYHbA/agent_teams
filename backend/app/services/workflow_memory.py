@@ -132,13 +132,29 @@ def build_memory_context(project_path_str: str, task: str, settings: Settings, *
     )
 
 
-def build_role_memory_guidance(memory_context: WorkflowMemoryContext) -> WorkflowRoleMemoryGuidance:
+def build_role_memory_guidance(
+    memory_context: WorkflowMemoryContext,
+    locale: str | None = None,
+) -> WorkflowRoleMemoryGuidance:
+    use_zh = locale == "zh-CN"
     recalled_entries = [*memory_context.recalled_project, *memory_context.recalled_global]
     if not recalled_entries:
         return WorkflowRoleMemoryGuidance(
-            planner=["No prior memory was recalled, so surface assumptions and unknowns explicitly in the plan."],
-            reviewer=["No prior memory was recalled, so focus on regressions, verification coverage, and missing edge cases."],
-            reporter=["No prior memory was recalled, so write a fresh handoff that future runs can reuse directly."],
+            planner=[
+                "这次没有召回历史记忆，所以请把关键假设、未知项和取舍条件直接写清楚。"
+                if use_zh
+                else "No prior memory was recalled, so surface assumptions and unknowns explicitly in the plan."
+            ],
+            reviewer=[
+                "这次没有召回历史记忆，所以重点检查回归风险、验证覆盖和遗漏的边界情况。"
+                if use_zh
+                else "No prior memory was recalled, so focus on regressions, verification coverage, and missing edge cases."
+            ],
+            reporter=[
+                "这次没有召回历史记忆，所以请写出一份新的交接说明，方便后续运行直接复用。"
+                if use_zh
+                else "No prior memory was recalled, so write a fresh handoff that future runs can reuse directly."
+            ],
         )
 
     planner: list[str] = []
@@ -147,13 +163,24 @@ def build_role_memory_guidance(memory_context: WorkflowMemoryContext) -> Workflo
     for entry in recalled_entries[:MAX_RECALLED_ENTRIES]:
         scope = entry.scope
         if entry.entry_kind == "global_rule":
-            planner.append(f"Apply reusable global rule `{entry.title}`: {entry.summary}")
-            reviewer.append(f"Enforce reusable global rule `{entry.title}` while checking regressions and edge cases.")
-            reporter.append(f"State whether this run upheld, refined, or superseded reusable global rule `{entry.title}`.")
+            if use_zh:
+                planner.append(f"沿用可复用的全局规则“{entry.title}”：{entry.summary}")
+                reviewer.append(f"检查回归和边界情况时，确认可复用全局规则“{entry.title}”是否被遵守。")
+                reporter.append(f"在交接里说明这次运行是延续、修正，还是替换了全局规则“{entry.title}”。")
+            else:
+                planner.append(f"Apply reusable global rule `{entry.title}`: {entry.summary}")
+                reviewer.append(f"Enforce reusable global rule `{entry.title}` while checking regressions and edge cases.")
+                reporter.append(f"State whether this run upheld, refined, or superseded reusable global rule `{entry.title}`.")
             continue
-        planner.append(f"Carry forward {scope} memory `{entry.title}`: {entry.summary}")
-        reviewer.append(f"Cross-check the outcome against {scope} memory `{entry.title}` before closing the run.")
-        reporter.append(f"State whether this run confirms, updates, or supersedes {scope} memory `{entry.title}`.")
+        if use_zh:
+            scope_label = "项目" if scope == "project" else "全局"
+            planner.append(f"延续{scope_label}记忆“{entry.title}”：{entry.summary}")
+            reviewer.append(f"收尾前请对照{scope_label}记忆“{entry.title}”，确认结果没有偏离。")
+            reporter.append(f"在交接里说明这次运行是确认、更新，还是替换了{scope_label}记忆“{entry.title}”。")
+        else:
+            planner.append(f"Carry forward {scope} memory `{entry.title}`: {entry.summary}")
+            reviewer.append(f"Cross-check the outcome against {scope} memory `{entry.title}` before closing the run.")
+            reporter.append(f"State whether this run confirms, updates, or supersedes {scope} memory `{entry.title}`.")
 
     return WorkflowRoleMemoryGuidance(planner=planner, reviewer=reviewer, reporter=reporter)
 

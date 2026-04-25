@@ -10,34 +10,35 @@ type AppHeaderProps = {
 };
 
 export function AppHeader({ t, locale, onLocaleChange, summary, capabilities }: AppHeaderProps) {
+  const codexStatusLabel = summary?.codex_cli_available ? t("hero.codexReady") : t("hero.localMode");
+
   return (
     <header className="app-header">
-      <div className="hero-copy-block">
+      <div className="app-header-brand">
         <p className="eyebrow">{t("app.badge")}</p>
-        <h1>{t("app.title")}</h1>
-        <p className="hero-copy">{t("app.subtitle")}</p>
+        <div className="app-title-row">
+          <h1>{t("app.title")}</h1>
+          <span className="header-chip">{t("app.alpha")}</span>
+        </div>
+        <p className="hero-copy compact">{t("app.subtitle")}</p>
       </div>
 
       <div className="header-side">
         <label className="locale-switcher">
           <span>{t("common.language")}</span>
           <select value={locale} onChange={(event) => onLocaleChange(event.target.value as Locale)}>
-            <option value="zh-CN">中文</option>
-            <option value="en-US">English</option>
+            <option value="zh-CN">{t("locale.zh-CN")}</option>
+            <option value="en-US">{t("locale.en-US")}</option>
           </select>
         </label>
 
-        <div className="header-status-grid">
-          <article className="status-card">
-            <span className="status-label">{t("hero.codex")}</span>
-            <strong>{summary?.codex_cli_available ? t("hero.codexDetected") : t("hero.codexUnavailable")}</strong>
-            <span>{capabilities?.version ?? summary?.integration_mode ?? t("common.waiting")}</span>
-          </article>
-          <article className="status-card accent">
-            <span className="status-label">{t("hero.workflowMode")}</span>
-            <strong>{t("hero.workflowStrict")}</strong>
-            <span>{t("hero.workflowStrictNote")}</span>
-          </article>
+        <div className="header-meta-row">
+          <span className="header-meta-chip">
+            {codexStatusLabel}
+          </span>
+          <span className="header-meta-chip">
+            {t("hero.workflowStrict")}
+          </span>
         </div>
       </div>
     </header>
