@@ -7,6 +7,7 @@ type DiagnosticsStageProps = {
   queueLoading: boolean;
   queueError: string;
   queueItemNote: (item: WorkflowQueueItem) => string;
+  queueModeLabel: (mode: WorkflowQueueItem["mode"]) => string;
   embedded?: boolean;
 };
 
@@ -16,6 +17,7 @@ export function DiagnosticsStage({
   queueLoading,
   queueError,
   queueItemNote,
+  queueModeLabel,
   embedded = false,
 }: DiagnosticsStageProps) {
   const queueItems = queueDashboard?.items ?? [];
@@ -122,7 +124,7 @@ export function DiagnosticsStage({
                   <div className="meta-grid compact">
                     <div>
                       <span className="meta-label">{t("diagnostics.queueMode")}</span>
-                      <strong>{item.mode}</strong>
+                      <strong>{queueModeLabel(item.mode)}</strong>
                     </div>
                     <div>
                       <span className="meta-label">{t("diagnostics.queueWorker")}</span>

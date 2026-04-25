@@ -44,6 +44,22 @@ export function BuildStage({
   onCreateRun,
   embedded = false,
 }: BuildStageProps) {
+  const shouldShowTaskChecklist = task.trim().length < 8;
+  const checklistItems = [
+    {
+      label: t("build.checklistGoalLabel"),
+      description: t("build.checklistGoalText"),
+    },
+    {
+      label: t("build.checklistConstraintsLabel"),
+      description: t("build.checklistConstraintsText"),
+    },
+    {
+      label: t("build.checklistDoneLabel"),
+      description: t("build.checklistDoneText"),
+    },
+  ];
+
   const content = (
     <>
       <div className="stage-intro">
@@ -52,7 +68,7 @@ export function BuildStage({
           <h2>{t("build.heading")}</h2>
           {!embedded ? <p>{t("build.description")}</p> : null}
         </div>
-        <span className="project-pill">{selectedProject || t("project.notSelected")}</span>
+        {!embedded ? <span className="project-pill">{selectedProject || t("project.notSelected")}</span> : null}
       </div>
 
       <div className="build-stage-grid">
@@ -72,6 +88,16 @@ export function BuildStage({
               <span className="field-hint warning">{t("build.taskTooShort")}</span>
             ) : null}
           </div>
+          {shouldShowTaskChecklist ? (
+            <div className="build-task-guide">
+              {checklistItems.map((item) => (
+                <article key={item.label} className="summary-card build-guide-card">
+                  <span className="meta-label">{item.label}</span>
+                  <p>{item.description}</p>
+                </article>
+              ))}
+            </div>
+          ) : null}
           <div className="button-row">
             <button type="button" className="primary-button" onClick={onCreateRun} disabled={runLoading || task.trim().length < 8 || !selectedProject}>
               {runLoading ? t("build.runLoading") : t("build.runButton")}
@@ -162,7 +188,10 @@ export function BuildStage({
               </div>
             </>
           ) : (
-            <div className="empty-state">{t("build.planEmpty")}</div>
+            <div className="build-plan-empty">
+              <div className="empty-state">{t("build.planEmpty")}</div>
+              <p className="workflow-copy">{t("build.taskHint")}</p>
+            </div>
           )}
         </article>
       </div>

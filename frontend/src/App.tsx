@@ -7,7 +7,6 @@ import {
   createWorkflowRun,
   executeWorkflowRun,
   exportProjectRuntime,
-  getCodexCapabilities,
   getCodexSummary,
   getDiscoveredProjects,
   getProjectCapabilities,
@@ -39,7 +38,6 @@ import { RunStage } from "./components/RunStage";
 import { WorkspaceStage } from "./components/WorkspaceStage";
 import { useI18n } from "./i18n";
 import type {
-  CodexCapabilities,
   CodexSummary,
   MemoryEntry,
   ProjectCapabilities,
@@ -95,7 +93,6 @@ export default function App() {
   const { locale, setLocale, t } = useI18n();
 
   const [summary, setSummary] = useState<CodexSummary | null>(null);
-  const [capabilities, setCapabilities] = useState<CodexCapabilities | null>(null);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [recentProjects, setRecentProjects] = useState<RecentProjectRecord[]>([]);
   const [projectCapabilities, setProjectCapabilities] = useState<ProjectCapabilities | null>(null);
@@ -163,16 +160,9 @@ export default function App() {
         const runFromUrl = search.get("run");
         const viewFromUrl = search.get("view");
 
-        const [
-          summaryResult,
-          capabilitiesResult,
-          projectsResult,
-          recentProjectsResult,
-          projectCapabilitiesResult,
-          projectRootsResult,
-        ] = await Promise.allSettled([
+        const [summaryResult, projectsResult, recentProjectsResult, projectCapabilitiesResult, projectRootsResult] =
+          await Promise.allSettled([
           getCodexSummary(),
-          getCodexCapabilities(),
           getDiscoveredProjects(),
           getRecentProjects(),
           getProjectCapabilities(),
@@ -181,9 +171,6 @@ export default function App() {
 
         if (summaryResult.status === "fulfilled") {
           setSummary(summaryResult.value);
-        }
-        if (capabilitiesResult.status === "fulfilled") {
-          setCapabilities(capabilitiesResult.value);
         }
         if (projectsResult.status === "fulfilled") {
           setProjects(projectsResult.value);
@@ -521,6 +508,10 @@ export default function App() {
     return t(`status.${status}`);
   }
 
+  function queueModeLabel(mode: WorkflowQueueItem["mode"]): string {
+    return t(`queueMode.${mode}`);
+  }
+
   function runtimeStateLabel(state: ProjectRuntime["state"] | null | undefined): string {
     if (!state) {
       return t("common.waiting");
@@ -553,15 +544,6 @@ export default function App() {
     }
     if (run.dangerous_commands_confirmed_at) {
       return `${t("run.safetyApproved")} ${t("common.at")} ${formatDateTime(run.dangerous_commands_confirmed_at)}`;
-    }
-    if (run.status === "running" && run.cancel_requested_at) {
-      return `${t("run.cancelRun")} · ${formatDateTime(run.cancel_requested_at)}`;
-    }
-    if (run.status === "cancelled" && run.cancelled_at) {
-      return `${t("status.cancelled")} · ${formatDateTime(run.cancelled_at)}`;
-    }
-    if (run.dangerous_commands_confirmed_at) {
-      return `${t("run.safetyApproved")} · ${formatDateTime(run.dangerous_commands_confirmed_at)}`;
     }
     if (run.attempt_count > 1) {
       return `${t("run.attempt")} ${run.attempt_count}`;
@@ -617,7 +599,7 @@ export default function App() {
     if (item.status === "queued") {
       return item.target_step_id
         ? t("queue.queuedBranch", { step: item.target_step_id })
-        : t("queue.queuedFor", { mode: item.mode });
+        : t("queue.queuedFor", { mode: queueModeLabel(item.mode) });
     }
     if (item.error) {
       return item.error;
@@ -897,7 +879,7 @@ export default function App() {
   return (
     <div className="shell tech-shell">
       <div className="shell-backdrop" />
-      <AppHeader t={t} locale={locale} onLocaleChange={setLocale} summary={summary} capabilities={capabilities} />
+      <AppHeader t={t} locale={locale} onLocaleChange={setLocale} summary={summary} />
 
       {bootstrapError ? <div className="banner error">{bootstrapError}</div> : null}
 
@@ -982,7 +964,6 @@ export default function App() {
             <RunStage
               embedded
               t={t}
-              selectedProject={selectedProject}
               runs={runs}
               selectedRunId={selectedRunId}
               selectedRun={selectedRun}
@@ -1027,6 +1008,7 @@ export default function App() {
               queueLoading={queueLoading}
               queueError={queueError}
               queueItemNote={queueItemNote}
+              queueModeLabel={queueModeLabel}
             />
           }
         />

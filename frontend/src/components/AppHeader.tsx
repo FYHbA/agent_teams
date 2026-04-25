@@ -1,4 +1,4 @@
-import type { CodexCapabilities, CodexSummary } from "../types";
+import type { CodexSummary } from "../types";
 import type { Locale, Translator } from "../i18n";
 
 type AppHeaderProps = {
@@ -6,10 +6,9 @@ type AppHeaderProps = {
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
   summary: CodexSummary | null;
-  capabilities: CodexCapabilities | null;
 };
 
-export function AppHeader({ t, locale, onLocaleChange, summary, capabilities }: AppHeaderProps) {
+export function AppHeader({ t, locale, onLocaleChange, summary }: AppHeaderProps) {
   const codexStatusLabel = summary?.codex_cli_available ? t("hero.codexReady") : t("hero.localMode");
 
   return (
