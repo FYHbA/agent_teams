@@ -5,8 +5,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, TypedDict, cast
 from uuid import uuid4
 
-from fastapi import HTTPException
-
 from app.config import Settings
 from app.models.dto import WorkflowQueueDashboardResponse, WorkflowQueueItemRecord
 from app.services.workflow_control_db import connect_control_db, control_plane_db_path, initialize_control_db
@@ -510,93 +508,6 @@ def has_active_step_queue_item(run_id: str, settings: Settings) -> bool:
             (run_id,),
         ).fetchone()
         return row is not None
-    finally:
-        connection.close()
-
-
-def requeue_workflow_queue_item(item_id: str, settings: Settings) -> WorkflowQueueItemRecord:
-    initialize_control_db(settings)
-    connection = connect_control_db(settings)
-    try:
-        requeued_at = now_iso()
-        current = connection.execute(
-            "SELECT status FROM workflow_run_queue WHERE id = ?",
-            (item_id,),
-        ).fetchone()
-        if current is None:
-            raise HTTPException(status_code=404, detail=f"Queue item not found: {item_id}")
-        if current["status"] == "running":
-            raise HTTPException(status_code=409, detail=f"Running queue items cannot be manually requeued: {item_id}")
-
-        connection.execute(
-            """
-            UPDATE workflow_run_queue
-            SET status = 'queued',
-                updated_at = ?,
-                started_at = NULL,
-                completed_at = NULL,
-                error = 'Queue item was manually requeued.',
-                worker_id = NULL,
-                heartbeat_at = NULL,
-                lease_expires_at = NULL
-            WHERE id = ?
-            """,
-            (requeued_at, item_id),
-        )
-        row = connection.execute(
-            """
-            SELECT *
-            FROM workflow_run_queue
-            WHERE id = ?
-            """,
-            (item_id,),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail=f"Queue item not found: {item_id}")
-        return WorkflowQueueItemRecord.model_validate(_row_to_item(row))
-    finally:
-        connection.close()
-
-
-def cancel_workflow_queue_item(item_id: str, settings: Settings) -> WorkflowQueueItemRecord:
-    initialize_control_db(settings)
-    connection = connect_control_db(settings)
-    try:
-        cancelled_at = now_iso()
-        current = connection.execute(
-            "SELECT status FROM workflow_run_queue WHERE id = ?",
-            (item_id,),
-        ).fetchone()
-        if current is None:
-            raise HTTPException(status_code=404, detail=f"Queue item not found: {item_id}")
-        if current["status"] == "running":
-            raise HTTPException(status_code=409, detail=f"Running queue items must be cancelled from the workflow run: {item_id}")
-
-        connection.execute(
-            """
-            UPDATE workflow_run_queue
-            SET status = 'cancelled',
-                completed_at = ?,
-                updated_at = ?,
-                error = 'Queue item was manually cancelled.',
-                worker_id = NULL,
-                heartbeat_at = NULL,
-                lease_expires_at = NULL
-            WHERE id = ?
-            """,
-            (cancelled_at, cancelled_at, item_id),
-        )
-        row = connection.execute(
-            """
-            SELECT *
-            FROM workflow_run_queue
-            WHERE id = ?
-            """,
-            (item_id,),
-        ).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail=f"Queue item not found: {item_id}")
-        return WorkflowQueueItemRecord.model_validate(_row_to_item(row))
     finally:
         connection.close()
 

@@ -11,7 +11,6 @@ from app.models.dto import (
     RecentProjectRecord,
     WorkspaceOpenRequest,
     WorkspaceRecord,
-    WorkspaceUpdateRequest,
     ProjectRuntimeMirrorRequest,
     ProjectRuntimeMirrorResponse,
     ProjectRuntimeRequest,
@@ -21,7 +20,7 @@ from app.models.dto import (
 from app.services.project_picker import pick_project_directory, project_picker_available
 from app.services.projects import discover_projects, list_directory, list_project_roots
 from app.services.runtime import get_project_runtime, init_project_runtime, list_recent_projects
-from app.services.workspace_registry import get_workspace, list_workspaces, update_workspace, upsert_workspace
+from app.services.workspace_registry import upsert_workspace
 from app.services.workflow_project_mirror import (
     export_project_control_plane,
     import_project_control_plane,
@@ -46,16 +45,6 @@ def read_recent_projects(settings: Settings = Depends(get_settings)) -> list[Rec
     return list_recent_projects(settings)
 
 
-@router.get("/workspaces", response_model=list[WorkspaceRecord])
-def read_workspaces(settings: Settings = Depends(get_settings)) -> list[WorkspaceRecord]:
-    return list_workspaces(settings)
-
-
-@router.get("/workspaces/{workspace_id}", response_model=WorkspaceRecord)
-def read_workspace(workspace_id: str, settings: Settings = Depends(get_settings)) -> WorkspaceRecord:
-    return get_workspace(workspace_id, settings)
-
-
 @router.post("/workspaces/open", response_model=WorkspaceRecord)
 def open_workspace(
     request: WorkspaceOpenRequest,
@@ -70,15 +59,6 @@ def open_workspace(
         trusted=True,
         mark_opened=True,
     )
-
-
-@router.post("/workspaces/{workspace_id}", response_model=WorkspaceRecord)
-def patch_workspace(
-    workspace_id: str,
-    request: WorkspaceUpdateRequest,
-    settings: Settings = Depends(get_settings),
-) -> WorkspaceRecord:
-    return update_workspace(workspace_id, request, settings)
 
 
 @router.get("/capabilities", response_model=ProjectCapabilitiesResponse)

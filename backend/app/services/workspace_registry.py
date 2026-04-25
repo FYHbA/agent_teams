@@ -5,10 +5,8 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import HTTPException
-
 from app.config import Settings
-from app.models.dto import RecentProjectRecord, WorkspaceRecord, WorkspaceUpdateRequest
+from app.models.dto import RecentProjectRecord, WorkspaceRecord
 from app.services.runtime import project_runtime_path, resolve_project_path
 from app.services.workflow_run_store import now_iso, write_json
 
@@ -117,13 +115,6 @@ def list_workspaces(settings: Settings) -> list[WorkspaceRecord]:
     return workspaces
 
 
-def get_workspace(workspace_id: str, settings: Settings) -> WorkspaceRecord:
-    for workspace in _ensure_registry(settings):
-        if workspace.id == workspace_id:
-            return workspace
-    raise HTTPException(status_code=404, detail=f"Workspace not found: {workspace_id}")
-
-
 def workspace_for_path(project_path_str: str, settings: Settings) -> WorkspaceRecord | None:
     project_path = str(resolve_project_path(project_path_str))
     for workspace in _ensure_registry(settings):
@@ -181,24 +172,6 @@ def upsert_workspace(
     rows.append(workspace)
     _save_workspace_rows(rows, settings)
     return workspace
-
-
-def update_workspace(workspace_id: str, request: WorkspaceUpdateRequest, settings: Settings) -> WorkspaceRecord:
-    rows = _ensure_registry(settings)
-    for index, workspace in enumerate(rows):
-        if workspace.id != workspace_id:
-            continue
-        updated = workspace.model_copy(
-            update={
-                "name": request.name or workspace.name,
-                "alias": _unique_alias(request.alias or workspace.alias, rows, exclude_workspace_id=workspace.id),
-                "updated_at": now_iso(),
-            }
-        )
-        rows[index] = updated
-        _save_workspace_rows(rows, settings)
-        return updated
-    raise HTTPException(status_code=404, detail=f"Workspace not found: {workspace_id}")
 
 
 def list_recent_projects(settings: Settings, *, limit: int = 12) -> list[RecentProjectRecord]:

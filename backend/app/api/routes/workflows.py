@@ -8,7 +8,6 @@ from app.models.dto import (
     DangerousCommandApprovalRequest,
     WorkflowAgentSessionRecord,
     WorkflowQueueDashboardResponse,
-    WorkflowQueueItemRecord,
     WorkflowRunArtifactsResponse,
     WorkflowPlanRequest,
     WorkflowPlanResponse,
@@ -19,7 +18,6 @@ from app.models.dto import (
 from app.services.workflow_run_events import stream_workflow_run_events
 from app.services.workflow_runs import (
     approve_workflow_run_dangerous_commands,
-    cancel_workflow_queue_item,
     cancel_workflow_run,
     create_workflow_run,
     get_workflow_queue_dashboard,
@@ -28,7 +26,6 @@ from app.services.workflow_runs import (
     list_workflow_runs,
     read_workflow_run_artifacts,
     read_workflow_run_log,
-    requeue_workflow_queue_item,
     resume_workflow_run,
     retry_workflow_run,
     start_workflow_run,
@@ -165,22 +162,6 @@ def read_workflow_queue_dashboard(
     settings: Settings = Depends(get_settings),
 ) -> WorkflowQueueDashboardResponse:
     return get_workflow_queue_dashboard(settings)
-
-
-@router.post("/queue/{item_id}/cancel", response_model=WorkflowQueueItemRecord)
-def cancel_queue_item(
-    item_id: str,
-    settings: Settings = Depends(get_settings),
-) -> WorkflowQueueItemRecord:
-    return cancel_workflow_queue_item(item_id, settings)
-
-
-@router.post("/queue/{item_id}/requeue", response_model=WorkflowQueueItemRecord)
-def requeue_queue_item(
-    item_id: str,
-    settings: Settings = Depends(get_settings),
-) -> WorkflowQueueItemRecord:
-    return requeue_workflow_queue_item(item_id, settings)
 
 
 @router.get("/runs/{run_id}/agent-sessions", response_model=list[WorkflowAgentSessionRecord])

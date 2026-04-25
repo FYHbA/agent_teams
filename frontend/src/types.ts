@@ -10,40 +10,11 @@ export type CodexSummary = {
   note: string;
 };
 
-export type CodexCapabilities = {
-  codex_cli_available: boolean;
-  version: string | null;
-  resume_available: boolean;
-  exec_resume_available: boolean;
-  app_server_available: boolean;
-  exec_server_available: boolean;
-  mcp_server_available: boolean;
-  config_path: string;
-  session_index_path: string;
-  note: string;
-};
-
-export type CodexSession = {
-  id: string;
-  thread_name: string;
-  updated_at: string;
-};
-
 export type CodexCommandSpec = {
   argv: string[];
   cwd: string | null;
   mode: "interactive" | "non_interactive" | "service";
   purpose: string;
-};
-
-export type CodexSessionBridge = {
-  session: CodexSession;
-  project_path: string | null;
-  session_log_path: string | null;
-  can_resume: boolean;
-  commands: CodexCommandSpec[];
-  strategies: string[];
-  warnings: string[];
 };
 
 export type ProjectRecord = {

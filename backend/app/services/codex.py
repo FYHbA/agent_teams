@@ -4,7 +4,6 @@ import json
 import subprocess
 import shutil
 import tomllib
-from collections import deque
 from functools import lru_cache
 from pathlib import Path
 
@@ -97,30 +96,6 @@ def get_codex_summary(settings: Settings) -> CodexSummaryResponse:
             "Session file parsing is available as a UI/indexing fallback."
         ),
     )
-
-
-def load_recent_sessions(settings: Settings, limit: int = 8) -> list[CodexSessionSummary]:
-    session_index_path = _session_index_path(settings)
-    if not session_index_path.exists():
-        return []
-
-    tail: deque[str] = deque(maxlen=limit)
-    with session_index_path.open("r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            if line.strip():
-                tail.append(line)
-
-    sessions: list[CodexSessionSummary] = []
-    for raw_line in reversed(tail):
-        payload = json.loads(raw_line)
-        sessions.append(
-            CodexSessionSummary(
-                id=payload.get("id", "unknown"),
-                thread_name=payload.get("thread_name", "Untitled session"),
-                updated_at=payload.get("updated_at", ""),
-            )
-        )
-    return sessions
 
 
 def find_session_summary(session_id: str, settings: Settings) -> CodexSessionSummary:

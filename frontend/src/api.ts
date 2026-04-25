@@ -1,7 +1,4 @@
 import type {
-  CodexCapabilities,
-  CodexSession,
-  CodexSessionBridge,
   CodexSummary,
   ProjectRecord,
   ProjectRootEntry,
@@ -13,7 +10,6 @@ import type {
   RecentProjectRecord,
   WorkspaceRecord,
   WorkflowPlan,
-  WorkflowQueueItem,
   WorkflowQueueDashboard,
   WorkflowRunArtifacts,
   WorkflowAgentSession,
@@ -49,29 +45,6 @@ export function getCodexSummary(): Promise<CodexSummary> {
   return fetchJson<CodexSummary>("/api/codex/summary");
 }
 
-export function getCodexCapabilities(): Promise<CodexCapabilities> {
-  return fetchJson<CodexCapabilities>("/api/codex/capabilities");
-}
-
-export function getRecentSessions(): Promise<CodexSession[]> {
-  return fetchJson<CodexSession[]>("/api/codex/sessions");
-}
-
-export function prepareCodexSessionBridge(
-  sessionId: string,
-  payload: {
-    project_path: string | null;
-    prompt?: string;
-    sandbox_mode?: "read-only" | "workspace-write" | "danger-full-access";
-    approval_policy?: "untrusted" | "on-request" | "never";
-  },
-): Promise<CodexSessionBridge> {
-  return fetchJson<CodexSessionBridge>(`/api/codex/sessions/${encodeURIComponent(sessionId)}/bridge`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
 export function getDiscoveredProjects(): Promise<ProjectRecord[]> {
   return fetchJson<ProjectRecord[]>("/api/projects/discovered");
 }
@@ -84,10 +57,6 @@ export function getRecentProjects(): Promise<RecentProjectRecord[]> {
   return fetchJson<RecentProjectRecord[]>("/api/projects/recent");
 }
 
-export function getWorkspaces(): Promise<WorkspaceRecord[]> {
-  return fetchJson<WorkspaceRecord[]>("/api/projects/workspaces");
-}
-
 export function openWorkspace(payload: {
   project_path: string;
   name?: string;
@@ -95,19 +64,6 @@ export function openWorkspace(payload: {
   source?: "codex-config" | "filesystem" | "manual" | "picker";
 }): Promise<WorkspaceRecord> {
   return fetchJson<WorkspaceRecord>("/api/projects/workspaces/open", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function updateWorkspace(
-  workspaceId: string,
-  payload: {
-    name?: string;
-    alias?: string;
-  },
-): Promise<WorkspaceRecord> {
-  return fetchJson<WorkspaceRecord>(`/api/projects/workspaces/${encodeURIComponent(workspaceId)}`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -178,8 +134,6 @@ export function createWorkflowRun(payload: {
   allow_network: boolean;
   allow_installs: boolean;
   locale?: "zh-CN" | "en-US";
-  codex_session_id?: string | null;
-  resume_prompt?: string;
   start_immediately?: boolean;
 }): Promise<WorkflowRun> {
   return fetchJson<WorkflowRun>("/api/workflows/runs", {
@@ -311,18 +265,6 @@ export function parseWorkflowRunEvent(data: string): WorkflowRunEvent {
 
 export function getWorkflowQueueDashboard(): Promise<WorkflowQueueDashboard> {
   return fetchJson<WorkflowQueueDashboard>("/api/workflows/queue");
-}
-
-export function cancelWorkflowQueueItem(itemId: string): Promise<WorkflowQueueItem> {
-  return fetchJson<WorkflowQueueItem>(`/api/workflows/queue/${encodeURIComponent(itemId)}/cancel`, {
-    method: "POST",
-  });
-}
-
-export function requeueWorkflowQueueItem(itemId: string): Promise<WorkflowQueueItem> {
-  return fetchJson<WorkflowQueueItem>(`/api/workflows/queue/${encodeURIComponent(itemId)}/requeue`, {
-    method: "POST",
-  });
 }
 
 export function getWorkflowAgentSessions(runId: string): Promise<WorkflowAgentSession[]> {

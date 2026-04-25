@@ -18,11 +18,7 @@ from app.services.codex import build_session_bridge
 from app.services.runtime import init_project_runtime, project_runtime_path, resolve_project_path
 from app.services.workflow_agent_sessions import list_agent_sessions
 from app.services.workflow_memory import build_memory_context
-from app.services.workflow_run_queue import (
-    cancel_workflow_queue_item,
-    get_workflow_queue_dashboard,
-    requeue_workflow_queue_item,
-)
+from app.services.workflow_run_queue import get_workflow_queue_dashboard
 from app.services.workflow_run_artifacts import changes_template, read_run_artifacts, report_template
 from app.services.workflow_run_execution import (
     approve_workflow_run_dangerous_commands,
@@ -205,7 +201,6 @@ def read_workflow_run_artifacts(run_id: str, project_path_str: str | None, setti
 
 __all__ = [
     "approve_workflow_run_dangerous_commands",
-    "cancel_workflow_queue_item",
     "cancel_workflow_run",
     "create_workflow_run",
     "execute_workflow_run_now",
@@ -215,7 +210,6 @@ __all__ = [
     "list_workflow_runs",
     "read_workflow_run_log",
     "read_workflow_run_artifacts",
-    "requeue_workflow_queue_item",
     "resume_workflow_run",
     "resume_workflow_run_now",
     "retry_workflow_run",

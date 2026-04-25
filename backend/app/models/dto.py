@@ -111,11 +111,6 @@ class WorkspaceOpenRequest(BaseModel):
     source: Literal["codex-config", "filesystem", "manual", "picker"] = "manual"
 
 
-class WorkspaceUpdateRequest(BaseModel):
-    name: str | None = None
-    alias: str | None = None
-
-
 class ProjectRuntimeMirrorRequest(BaseModel):
     project_path: str
     path: str | None = None
