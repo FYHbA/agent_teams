@@ -1,1 +1,1 @@
-"""Agents Team backend package."""
+"""agents_team backend package."""

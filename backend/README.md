@@ -1,4 +1,4 @@
-# Agents Team Backend
+# agents_team backend
 
 FastAPI service for:
 

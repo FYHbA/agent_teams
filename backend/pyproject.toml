@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agents-team-backend"
+name = "agents_team_backend"
 version = "0.1.0"
-description = "Backend service for the Agents Team local-first multi-agent workbench."
+description = "Backend service for the agents_team local-first multi-agent workbench."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
