@@ -1,28 +1,45 @@
-# agents_team
+# 读前须知 📌
 
-`agents_team` is the repository for Agents Team, a local-first multi-agent code collaboration workbench.
-It is designed to solve a gap in current Codex usage: multiple conversations can exist at once, but they do not naturally coordinate, share workflow state, or operate as an explicit team.
+​	在码农正在变成夕阳行业的今天，抱着“打不过就加入”的心态，参考了 gstack 的 Skills 思路，借助 Codex 尝试了一次几乎完全由自然语言驱动的编程实践。除了这段说明，整个项目基本都由 Codex 协助完成。🤖
+
+​	于是有了 **agents_team**：一个基于 Codex 构建的智能体团队协作工具，用多个 Agent 按流程协同处理任务。🧩
+
+​	目前项目还比较脆弱，更多算是一次自娱自乐式的探索。但它已经可以按照既定流程，在本地调度多个智能体，完成基础计算器这类简单代码任务的编写与运行。🚀
+
+​	后续我会持续优化，比如扩展大模型接口支持 DeepSeek、将项目改造成可在服务器环境中运行等。归根结底，如何适应纯自然语言编程，并在这个过程中持续学习、迭代和进步，可能才是卑微的码农面向未来的重要出路。🌱
+
+​	如果这个思路对你有启发，欢迎点个 Star！⭐
+
+# 🤝 agents_team
+
+`agents_team` is a **local-first multi-agent code collaboration workbench** for coordinating Codex-powered engineering workflows.
+
+It fills a practical gap in today’s Codex usage: you can run multiple conversations, but they do not naturally coordinate, share workflow state, or behave like an explicit team. `agents_team` turns those isolated sessions into a persistent, project-aware workbench.
+
+![figure1](figures/figure1.png)
+
+## ✨ What it does
 
 This repository contains the first product skeleton:
 
-- A browser-based frontend for opening one project folder at a time, drafting tasks, and staying inside a persistent workbench
-- A FastAPI backend for orchestration, local filesystem access, and Codex integration scaffolding
-- A foundation for project-local runtime state via `.agents-team/`
+- 🖥️ **Browser workbench** for opening one project folder, drafting tasks, and staying in one persistent workspace
+- ⚙️ **FastAPI backend** for orchestration, local filesystem access, and Codex integration scaffolding
+- 🧠 **Project-local runtime state** stored under `.agents-team/`
 
-## Product direction
+## 🧭 Product direction
 
-V1 is focused on code-task collaboration.
+V1 focuses on **code-task collaboration**:
 
-- Local-first
-- Single-project workbench focus
-- Strict workflow collaboration
-- Auto-generated agent teams
-- Direct file editing by agents
-- Human-controlled Git actions
-- Read-only Codex config visibility
-- Codex session reuse where possible
+- 🏠 Local-first by default
+- 📁 Single-project workbench flow
+- 🔒 Strict workflow collaboration
+- 🤖 Auto-generated agent teams
+- ✍️ Direct file editing by agents
+- 👤 Human-controlled Git actions
+- 👀 Read-only Codex config visibility
+- 🔁 Codex session reuse where possible
 
-## Repository layout
+## 📂 Repository layout
 
 ```text
 frontend/   React + Vite workspace
@@ -30,7 +47,7 @@ backend/    FastAPI service and orchestration skeleton
 docs/       Architecture and product notes
 ```
 
-## Quick start
+## 🚀 Quick start
 
 ### Backend
 
@@ -60,10 +77,9 @@ npm install
 npm run dev
 ```
 
-The frontend uses relative `/api` requests in development.
-Vite proxies those requests to the backend dev server.
+The frontend uses relative `/api` requests in development, and Vite proxies them to the backend dev server.
 
-### Dev Launcher
+### Dev launcher
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/dev-up.ps1
@@ -71,21 +87,32 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-status.ps1
 powershell -ExecutionPolicy Bypass -File scripts/dev-down.ps1
 ```
 
-## Current backend endpoints
+## 🔌 Current backend endpoints
+
+### Health and Codex
 
 - `GET /api/health`
 - `GET /api/codex/summary`
+
+### Projects
+
 - `GET /api/projects/discovered`
 - `GET /api/projects/roots`
 - `GET /api/projects/recent`
 - `POST /api/projects/workspaces/open`
 - `POST /api/projects/pick`
 - `GET /api/projects/tree?path=<project-dir>`
+
+### Runtime state
+
 - `GET /api/projects/runtime?path=<project-dir>`
 - `POST /api/projects/runtime/init`
 - `POST /api/projects/runtime/mirror`
 - `POST /api/projects/runtime/export`
 - `POST /api/projects/runtime/import`
+
+### Workflows
+
 - `POST /api/workflows/plan`
 - `POST /api/workflows/runs`
 - `GET /api/workflows/runs?project_path=<project-dir>`
@@ -103,80 +130,104 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-down.ps1
 - `GET /api/workflows/runs/{run_id}/agent-sessions`
 - `GET /api/workflows/queue`
 
-## Local runtime state
+## 🗂️ Local runtime state
 
-The product is designed to create a hidden control directory inside managed user projects:
+Managed projects get a hidden control directory:
 
 ```text
 <project>/.agents-team/
 ```
 
-That directory is meant to hold:
+It is designed to hold:
 
-- project-local metadata
-- workflow runs
-- reports
-- artifact indexes
-- project memory
-- logs
+- 🧾 Project-local metadata
+- 🏃 Workflow runs
+- 📊 Reports
+- 📦 Artifact indexes
+- 🧠 Project memory
+- 🪵 Logs
 
-The product itself may also use a global app home directory under the user's home directory.
+The app may also use a global home directory under the user’s home directory.
 
-Workflow runs now persist step-level execution state, attempt counts, cancellation metadata, logs, generated reports, artifact bundles, and a realtime event stream under the project-local runtime and HTTP API surface.
-Workflow execution now enters a persistent global SQLite-backed run queue before worker execution, so queued/running items can be claimed safely across backend processes and recovered after a backend restart instead of depending only on the original request thread.
-Run metadata, step ledger state, and cross-project run lookup metadata now also live in the same control-plane SQLite store instead of separate `run.json` and `run-index.json` files.
-Runs now also recall project/global memory at creation time, inject that context into workflow execution, and write fresh handoff memory back on terminal states.
-Codex-backed workflow steps no longer run directly inside the real project tree. They now execute inside isolated context workspaces under the global app home, with projected source files for edit-capable steps and generated `.agents-context/` state files for machine-readable handoffs.
-Those machine-readable handoffs are now persisted under each run as JSON contracts such as `research-result.json`, `verify-summary.json`, `review-result.json`, and `final-state.json`, while markdown artifacts remain human-facing renderings derived from those contracts.
-Every Codex-backed step also writes a context-audit record into the control-plane database so the backend can track which structured sources were exposed to the model, how many bytes were included, and whether any forbidden raw workflow files were requested.
-When the upstream `codex exec --json` stream includes usage data, those same context-audit records now also capture real `input_tokens`, `cached_input_tokens`, and `output_tokens`.
-Research can now also short-circuit a run when it determines the task is already covered by a recent successful run or already satisfied by the current project state. In that case the workflow skips later execution steps, still produces a final handoff, and records the run as `short_circuited` instead of pretending it was a normal completion.
-For near-duplicate tasks that still need a small follow-up, research can now emit `continue_with_delta`. The scheduler preserves the run, persists a structured delta scope, rewrites later step goals, trims command previews, and narrows verification lanes so implement / verify / review / report focus only on the remaining delta instead of replaying the full original workflow.
-The browser UI now surfaces both layers directly: the run artifact view can open the persisted JSON contracts, and diagnostics can show per-step context-audit summaries for the currently selected run.
-Queue items now carry worker ownership, heartbeats, and lease expiry so stuck claims can be detected and recovered safely.
-Queue diagnostics now also stay summary-first under longer dogfooding sessions: the dashboard keeps all counts, but only surfaces active work, recent terminal queue items, and the most relevant worker rows by default.
-Each workflow step now produces its own tracked agent-session record with backend identity, worker ownership, provider path, and lifecycle timestamps.
-Workflow planning now includes explicit dependency edges between steps, and matrix-style tasks can execute verification waves in parallel before review and reporting rejoin the graph.
-Parallel verification branches can now be emitted as separately claimed queue items so different workers inside the backend process can consume them concurrently instead of relying on one coordinator thread to execute the whole wave.
-When a verification branch fails, the workflow can still carry partial success into review and report, with the final run marked failed after handoff artifacts are produced.
-Project-local control-plane mirrors and export/import snapshots now let the global SQLite control state be copied into `.agents-team/` and restored later.
-The frontend now supports bilingual UI text, a launcher + persistent single-project workbench flow, and a single-project path-first interaction model.
-Project opening and switching are now more browser-friendly: the UI can read recent projects from the backend registry, preserve view/project/run state in the URL, call a native folder picker on the backend host when available, and fall back to browsing the backend host filesystem with breadcrumbs and local folder filtering when the environment does not support a native picker.
-Once a project is open, task drafting, runtime tools, run orchestration, artifacts, quick project switching, and secondary diagnostics stay in one continuous workbench instead of separate top-level pages.
-The workbench now separates its two primary jobs into dedicated full-width sections: one area for building the team and shaping the next run, and one area for the run cockpit itself. This makes it easier to focus on composition first and execution second.
-The run cockpit also now includes a chat-style agent session view, so step-scoped agent updates can be read more like a conversation timeline instead of a raw metadata list.
-Agent sessions now also persist structured per-session event timelines, so the chat room can distinguish between in-progress thinking text, shell-command activity, and the final answer instead of flattening everything into one summary blob.
-That agent-session API now also exposes explicit presentation fields for `thinking`, `final`, `collapsed preview`, and normalized command entries, so old summary-only runs and newer structured-event runs collapse consistently instead of relying on frontend inference.
-The build surface now offers short task-drafting guidance when the request is still too thin, which helps first-time users shape a runnable brief without leaving the main composition flow.
-The run ledger now has lightweight search, deferred filtering, and date-grouped sections, so browsing older runs stays workable once a project starts accumulating real history.
-Inactive run ledger entries can now also be deleted end-to-end, which removes the stored run record, queue history, agent sessions, and saved artifacts together instead of leaving stale cockpit entries behind.
-Artifact reading is also more document-friendly now: markdown artifacts render with headings, lists, quotes, and code blocks instead of only as one raw preformatted text block, and the reader now includes a cross-document navigator, previous/next actions, a heading outline for the current document, and clearer path/type labeling.
-Run detail summary cards now live inside the overview tab instead of staying pinned above every detail view, and the chat room behaves more like a process transcript: active turns stay expanded, completed turns collapse into a compact message count, users can reopen any turn, expanded turns show the full final output plus process details, and the thread scrolls inside its own frame instead of taking over the whole page.
-When a session includes structured events, the chat room now follows a more Codex-like turn model: thinking notes stay open while the run is active, shell commands stay collapsed unless the user expands them, and once the step finishes the thinking collapses behind a disclosure while the final answer stays visible. The disclosure control itself now reads more like Codex too, with a tighter circular toggle and a softer expand/collapse transition instead of a generic pill button.
-When a chat turn is expanded, the UI now tries to show stage-specific result cards instead of only a long prose blob: files touched, checks run, warnings, suggested follow-ups, and other high-signal outcomes are pulled from the run's artifacts when that data exists.
-The trace tab no longer dumps every giant stdout/stderr block inline by default either. It now summarizes oversized stream output into compact cards with event counts, command counts, agent updates, and hidden-output totals, while still letting you open the raw block when you need the full log.
-Secondary surfaces now use less implementation-heavy language as well, especially around queued work, artifact types, and step-stage labels.
-The default planning path now stays focused on the task draft and execution policy, while lower-value Codex session resume controls are kept out of the main build surface so the UI is easier to understand for general users.
-Workflow drafts and run details now surface structured command previews for verification and Codex bridge paths, so dangerous-command approval is based on visible expected actions rather than a generic warning.
-Dangerous command approval can now be handled per command preview, with partial approvals preserved until the remaining gated commands are confirmed.
-Queue diagnostics now detect expired worker leases, requeue stale running items, and surface healthy-vs-abnormal worker state in a more compact summary-first view.
-Artifact bundles now include a parallel-branch summary document for matrix-style verification waves, which makes branch outcomes easier to audit after partial failures.
-Planner, reviewer, and reporter guidance now derive directly from structured memory so continuity checks and handoff priorities stay visible across the full workflow.
-Research and verify steps now write structured findings back into project memory, so later plans can recall concrete context and verification evidence instead of only final handoff summaries.
-High-signal research and verify findings can now be promoted into reusable global rules, and future workflow planning will treat those rules as stronger cross-project guidance.
-Planner, reviewer, and reporter now execute through distinct backend modules instead of sharing one generic step backend, and the cockpit surfaces those backend identities plus the planner's standalone planning brief artifact.
-Those planner, reviewer, and reporter backends now attempt their own delegated non-interactive Codex execution chains first, with local fallback behavior preserved when Codex is unavailable.
-Research and verify now follow the same pattern: each has its own delegated backend path, its own role-specific artifact, and a local fallback when Codex delegation is unavailable.
-At this point the full strict workflow has explicit role-scoped backends for planner, research, implement, verify, review, and report, with execution coordinated by a persistent SQLite queue-backed worker inside the backend process and each step independently tracked as an agent session.
-Runs that include command-backed steps now pause behind an explicit dangerous-command approval gate before execution, resume, or retry can proceed.
+## 🧩 Workflow engine highlights
 
-## Codex integration stance
+The workflow system is built around persistent, inspectable execution:
 
-The current plan is:
+- ✅ Step-level execution state, attempt counts, cancellation metadata, logs, reports, artifact bundles, and realtime events are persisted under project-local runtime state.
+- 🧱 Runs enter a global SQLite-backed queue before worker execution, making queued and running work recoverable across backend restarts.
+- 🗃️ Run metadata, step ledger state, and cross-project lookup metadata live in the same control-plane SQLite store.
+- 🧠 Runs recall project/global memory at creation time, inject that context into workflow execution, and write fresh handoff memory on terminal states.
+- 🧪 Matrix-style verification can run branches in parallel before review and reporting rejoin the graph.
+- 🚧 Command-backed steps pause behind explicit dangerous-command approval gates before execution, resume, or retry.
+
+## 🛡️ Safer Codex execution
+
+Codex-backed workflow steps do **not** run directly inside the real project tree. Instead, they execute in isolated context workspaces under the global app home.
+
+Those workspaces include:
+
+- Projected source files for edit-capable steps
+- Generated `.agents-context/` state files for machine-readable handoffs
+- JSON contracts such as `research-result.json`, `verify-summary.json`, `review-result.json`, and `final-state.json`
+- Human-facing markdown artifacts derived from those contracts
+
+Every Codex-backed step also writes a context-audit record so the backend can track which structured sources were exposed, how many bytes were included, and whether forbidden raw workflow files were requested. When upstream `codex exec --json` usage data is available, those records also capture token usage.
+
+## 🧠 Memory, reuse, and short-circuiting
+
+Research can now detect when a task is already covered by a recent successful run or already satisfied by the current project state. In that case, the workflow skips unnecessary execution, still produces a final handoff, and records the run as `short_circuited`.
+
+For near-duplicate tasks that need only a small follow-up, research can emit `continue_with_delta`. The scheduler then preserves the run, persists a structured delta scope, rewrites later step goals, trims command previews, and narrows verification lanes to the remaining work.
+
+High-signal research and verification findings can also be promoted into reusable global rules, giving future workflow planning stronger cross-project guidance.
+
+## 🧭 Workbench experience
+
+The browser UI is designed as a continuous single-project workbench:
+
+- 🌐 Bilingual UI text
+- 🚪 Launcher + persistent project workspace flow
+- 📌 Path-first project opening and switching
+- 🧭 Recent project registry, URL-preserved view state, and backend-host folder browsing fallback
+- 🧰 Runtime tools, task drafting, run orchestration, artifacts, quick switching, and diagnostics in one place
+
+The workbench separates its two primary jobs into full-width sections:
+
+1. **Build the team and shape the next run**
+2. **Operate the run cockpit**
+
+The cockpit includes a chat-style agent session view, structured event timelines, Codex-like thinking/final turn presentation, command activity, stage-specific result cards, and compact trace summaries for oversized stdout/stderr blocks.
+
+## 📚 Artifacts and diagnostics
+
+Artifacts are designed to be readable and auditable:
+
+- Markdown artifacts render with headings, lists, quotes, and code blocks
+- A cross-document navigator, previous/next actions, and heading outline improve longer artifact reading
+- Parallel-branch summary documents make matrix verification easier to inspect
+- Context audits expose per-step model context summaries
+- Queue diagnostics surface active work, recent terminal items, worker health, expired leases, and recoverable stale claims
+
+## 🤖 Role-scoped workflow backends
+
+The strict workflow now has explicit role-scoped backends for:
+
+- Planner
+- Research
+- Implement
+- Verify
+- Review
+- Report
+
+Planner, reviewer, reporter, research, and verify each attempt delegated non-interactive Codex execution first, with local fallback behavior preserved when Codex is unavailable. Each step is tracked as its own agent session and coordinated by the persistent SQLite queue-backed worker.
+
+## 🧬 Codex integration stance
+
+The current integration strategy is:
 
 - Prefer Codex CLI and server-style integration where possible
 - Reuse resumable sessions when stable enough
 - Avoid making Codex internal session files the only source of truth
 - Keep Codex config handling read-only in V1
 
-More detail lives in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+For more detail, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
